@@ -79,9 +79,16 @@ def subsample_events(x, num_events):
 def subsample_batch(x: List[torch.Tensor], num_events: int):
     """
     Select a random sample of events for each item in x stack them into a tensor
-
+    If an item has less than num_events, it is skipped
     """
-    return torch.stack([subsample_events(x[i], num_events) for i in range(len(x))], dim=0)
+    subsampled_x = []
+    for t in x:
+        if t.shape[0] < num_events:
+            continue
+        else:
+            subsampled_x.append(subsample_events(t, num_events))
+
+    return torch.stack(subsampled_x, dim=0)
 
 
 def scale(x, device='cpu', prob=0.5, scale=0.1):
