@@ -1,0 +1,95 @@
+# Byte-compiled / compiled Python files
+__pycache__/
+*.py[cod]
+*.class
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+_docs/_build/
+
+# PyBuilder
+target/
+
+# IPython Notebook
+.ipynb_checkpoints
+
+# Environment Variables
+.env
+.envrc
+.venv/
+.env.*
+venv/
+ENV/
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.sublime-workspace
+*.sublime-project
+
+# macOS files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Thumbnails
+._*
+Thumbs.db
+
+# Python virtual environments
+.venv/
+
+# Others
+.python-version
+.git/

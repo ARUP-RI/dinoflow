@@ -1,0 +1,24 @@
+[project]
+name = "dinoflow"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "O'Fallon, Brendan", email = "brendan.o'fallon@aruplab.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "ipykernel>=6.29.5",
+    "numpy>=2.2.2",
+    "pandas>=2.2.3",
+    "pyyaml>=6.0.2",
+    "torch>=2.6.0",
+    "typer>=0.15.1",
+]
+
+[project.scripts]
+dinoflow = "dinoflow:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
