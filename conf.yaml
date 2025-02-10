@@ -1,7 +1,7 @@
 
 data:
-  data_dir: /Users/brendan/data/flow/smallfortesting/
-  input_events: 1024
+  data_dir: /data1/flow/combined_noflt
+  input_events: 2048
 
 
 model:
@@ -11,7 +11,7 @@ model:
 
 
 training:
-  batch_size: 16
+  batch_size: 64
   min_lr: 0.00001
   max_lr: 0.0001
   warmup_iters: 100

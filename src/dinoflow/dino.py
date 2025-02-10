@@ -260,7 +260,7 @@ def train_dino(conf, run_name):
         
         #metrics.update(self_mean=augmean, other_mean=diffmean)
 
-        teacher_center = dino_epoch(loader, teacher, student, optimizer,
+        teacher_center, loss, cosine_sim = dino_epoch(loader, teacher, student, optimizer,
                    student_augs=student_augs,
                    teacher_augs=teacher_augs,
                    center_mo=conf['training']['center_momentum'],
@@ -268,6 +268,8 @@ def train_dino(conf, run_name):
                    teacher_center=teacher_center,
                    lr_schedule=lrschedule,
                    )
+        logger.info(f"Epoch #{epoch} Loss: {loss :.4f}  cos. sim: {cosine_sim :.4f}")
+
 
         if (epoch % checkpoint_freq == 0 or epoch == (conf['epochs'] - 1)) and int(os.environ.get('RANK', 0)) == 0:
             if isinstance(student, DDP):
