@@ -136,7 +136,7 @@ def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, 
         with torch.no_grad():
             cos_sim = cosine_similarity_matrix(y_t)
             self_cos_sim, off_diag_cos_sim = teacher_student_cosine_similarity(y_s, y_t)
-            logger.info(f"Batch {i}, loss: {loss.item() :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} off_diag_cos_sim: {off_diag_cos_sim.item() :.4f}")
+            logger.info(f"Batch {i}, loss: {loss.item() :.4f} KoLeo: {koleo_loss.item() :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} off_diag_cos_sim: {off_diag_cos_sim.item() :.4f}")
             cos_sim_sum += cos_sim.mean().item()
             teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
             dist_tot = 0
@@ -202,7 +202,7 @@ def train_dino(conf, run_name):
         return_key=conf['tube_type'],
     )
     
-    loader = DataLoader(tubes, batch_size=conf['training']['batch_size'], shuffle=True, pin_memory=True, num_workers=2, collate_fn=data.collate_fn)
+    loader = DataLoader(tubes, batch_size=conf['training']['batch_size'], shuffle=True, pin_memory=True, num_workers=4, collate_fn=data.collate_fn)
 
     student = TubeEncoder(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads']).to(DEVICE)
 
