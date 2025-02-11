@@ -269,6 +269,7 @@ def train_dino(conf, run_name):
                    param_mo=conf['training']['teacher_param_momentum'],
                    teacher_center=teacher_center,
                    lr_schedule=lrschedule,
+                   koleo_loss_weight=conf['training']['koleo_loss_weight'],
                    )
 
         if (epoch % checkpoint_freq == 0 or epoch == (conf['epochs'] - 1)) and int(os.environ.get('RANK', 0)) == 0:
