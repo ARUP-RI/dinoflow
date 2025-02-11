@@ -20,6 +20,7 @@ import numpy as np
 
 import logging
 
+
 from dinoflow.models import TubeEncoder
 from dinoflow import data
 from dinoflow.loss import KoLeoLoss
@@ -33,6 +34,9 @@ USE_DDP = int(os.environ.get('RANK', -1)) >= 0 and os.environ.get('WORLD_SIZE') 
 MASTER_PROCESS = (not USE_DDP) or os.environ.get('RANK') == '0'
 DEVICE = None # This is set in the 'train' method
 
+
+
+
 logger = logging.getLogger("dinoflow")
 
 logging.basicConfig(format='[%(asctime)s] %(process)d  %(name)s  %(levelname)s  %(message)s',
@@ -44,24 +48,17 @@ logging.basicConfig(format='[%(asctime)s] %(process)d  %(name)s  %(levelname)s  
 
 np.set_printoptions(precision=4, suppress=True, linewidth=160)
 
+if MASTER_PROCESS:
+    from comet_ml import Experiment
 
+    experiment = Experiment(
+      api_key=os.getenv('COMET_API_KEY'),
+      project_name="dinoflow",
+      workspace="brendan"
+    )
+else:
+    experiment = None
 
-class EntropyLoss(nn.Module):
-
-    def __init__(self, scale=10):
-        super().__init__()
-        self.scale = scale
-        self.sigm = nn.Sigmoid()
-
-    def forward(self, x):
-        loss = 0
-        for i in range(x.shape[1]):
-            st = 2*(self.sigm(self.scale * x[:, i, :, :]) - 0.5)
-            stsum = st.sum()
-            loss += stsum
-        return -1.0 * loss / (x.shape[1] * x.shape[2] * x.shape[3])
-
-import torch
 
 def cosine_similarity_matrix(X):
     # Normalize each column (vector) to unit norm
@@ -71,6 +68,21 @@ def cosine_similarity_matrix(X):
     S = X_norm.T @ X_norm  # (n x m) @ (m x n) -> (n x n)
     
     return S
+
+
+def teacher_student_cosine_similarity(ys, yt):
+    # Normalize each column (vector) to unit norm
+    ys_norm = ys / (ys.norm(dim=0, keepdim=True) + 1e-8)  # Avoid division by zero
+    yt_norm = yt / (yt.norm(dim=0, keepdim=True) + 1e-8)  # Avoid division by zero
+    
+    # Compute cosine similarity using matrix multiplication
+    S = ys_norm.T @ yt_norm  # (n x m) @ (m x n) -> (n x n)
+
+    # On-diagonal elements represent the same sample processed through the teacher and student, so they should have high similarity
+    # off diagonal elements represent different samples processed through the teacher and student, so they should have low similarity
+    on_diagonal_mean = S.diagonal().mean()
+    off_diagonal_mean = (S.sum() - S.diagonal().sum()) / (S.numel() - S.shape[0])
+    return on_diagonal_mean, off_diagonal_mean
 
 
 def dino_loss(ys, yt, C, s_temp=1, t_temp=0.5, eps=1e-8):
@@ -108,10 +120,10 @@ def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, 
             x_t = teacher_augs(batch).to(DEVICE)
             y_t = teacher(x_t.float())
 
-            dino_loss = dino_loss(y_s, y_t, teacher_center, s_temp=1.0, t_temp=0.9)
+            dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=1.0, t_temp=0.9)
             koleo_loss = koleoloss(y_s)
 
-            loss = dino_loss + koleo_loss_weight * koleo_loss
+            loss = dinoloss + koleo_loss_weight * koleo_loss
             epoch_loss_sum += loss.item()
 
         scaler.scale(loss).backward()
@@ -123,7 +135,8 @@ def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, 
         # Update centering and teacher weights
         with torch.no_grad():
             cos_sim = cosine_similarity_matrix(y_t)
-            logger.info(f"Batch {i}, loss: {loss.item() :.4f} cos sim: {cos_sim.mean().item() :.4f}")
+            self_cos_sim, off_diag_cos_sim = teacher_student_cosine_similarity(y_s, y_t)
+            logger.info(f"Batch {i}, loss: {loss.item() :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} off_diag_cos_sim: {off_diag_cos_sim.item() :.4f}")
             cos_sim_sum += cos_sim.mean().item()
             teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
             dist_tot = 0
@@ -183,20 +196,17 @@ def train_dino(conf, run_name):
     if MASTER_PROCESS:
         logger.info(f"Process {os.getpid()} is the master process")
 
-    # TODO read a labels csv?
-
-
     tubes = data.NoLabelTubes(
         dirpath=conf['data']['data_dir'],
         min_events=conf['data']['input_events'],
-        return_key="t",
+        return_key=conf['tube_type'],
     )
     
     loader = DataLoader(tubes, batch_size=conf['training']['batch_size'], shuffle=True, pin_memory=True, num_workers=2, collate_fn=data.collate_fn)
 
-    student = TubeEncoder(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers']).to(DEVICE)
+    student = TubeEncoder(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads']).to(DEVICE)
 
-    teacher = TubeEncoder(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers']).to(DEVICE)
+    teacher = TubeEncoder(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads']).to(DEVICE)
 
     for p in teacher.parameters():
         p.requires_grad = False
@@ -252,12 +262,6 @@ def train_dino(conf, run_name):
     
     checkpoint_freq = conf['training']['checkpoint_freq']
 
-    eval_batch_size = conf.get('eval_batch_size', 16)
-    # special_eval_samples = torch.randperm(len(tubes))[0:eval_batch_size]
-    # eval_accessions = [tubes.accession(i) for i in special_eval_samples]
-
-    
-
     #logger.info(f"Proc: {os.getpid()} device: {device_id} w: {student.module.backbone.embedding[0].weight[0, :]}")
     for epoch in range(conf['training']['epochs']):
 
@@ -271,7 +275,10 @@ def train_dino(conf, run_name):
                    koleo_loss_weight=conf['training']['koleo_loss_weight'],
                    )
         logger.info(f"Epoch #{epoch} LR: {lrschedule.get_lr()[0] :.5f} Loss: {loss :.4f}  cos. sim: {cosine_sim :.4f}")
-
+        if experiment is not None:
+            experiment.log_metric("loss", loss, epoch=epoch)
+            experiment.log_metric("cosine_sim", cosine_sim, epoch=epoch)
+            experiment.log_metric("lr", lrschedule.get_lr()[0], epoch=epoch)
 
         if (epoch % checkpoint_freq == 0 or epoch == (conf['training']['epochs'] - 1)) and int(os.environ.get('RANK', 0)) == 0:
             if isinstance(student, DDP):
@@ -283,6 +290,9 @@ def train_dino(conf, run_name):
                 "teacher": teacher.state_dict(),
                 "opt": optimizer.state_dict(),
                 "teacher_center": teacher_center,
+                "modelconf": conf['model'],
+                "trainingconf": conf['training'],
+                "tube_type": conf['tube_type'],
             }
             dest = f"{run_name}_epoch{epoch}.pt"
             logger.info(f"Saving checkpoint for epoch {epoch} to {dest}")
@@ -290,9 +300,13 @@ def train_dino(conf, run_name):
 
 
 @app.command()
-def train(config, run_name=None):
+def train(config, tube_type: str = None, run_name=None):
     logger.info(f"Loading config from {config}")
     conf = yaml.safe_load(open(config))
+    if tube_type is not None:
+        conf['tube_type'] = tube_type
+    
+    assert conf['tube_type'], f"Tube type not specified in config"
 
     result_root_dir = Path(conf.get("result_root", "."))
     result_root_dir.mkdir(parents=True, exist_ok=True)
@@ -300,54 +314,15 @@ def train(config, run_name=None):
     result_dir = result_root_dir / run_name
     result_dir.mkdir(parents=True, exist_ok=True)
 
+    if experiment is not None:
+        experiment.log_parameters(conf)
+        
+
     os.chdir(result_dir)
     with open("conf.yaml", "w") as fh:
         fh.write(yaml.dump(conf))
 
     train_dino(conf, run_name)
-
-@torch.no_grad()
-@app.command()
-def predict(ckpt: Path, glbs: List[str], dest: Path = None, rows: int = 32768, batch_size: int = 16):
-    global DEVICE
-    DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-    if 'cuda' in str(DEVICE):
-        for idev in range(torch.cuda.device_count()):
-            logger.info(f"CUDA device {idev} name: {torch.cuda.get_device_name({idev})}")
-
-    assert dest is not None, f"You must specify the --dest argument"
-
-    csvs = []
-    for glb in glbs:
-        items = glob(glb)
-        logger.info(f"Found {len(items)} items for {glb}")
-        csvs.extend(items)
-
-    transforms = [
-        partial(random_sample, max_size=rows),
-        # standardize_range_tcell,
-    ]
-
-    tubes = data.NoLabelTubes(
-        dirpath=csvs,
-        min_events=rows,
-        return_keys=["t"],
-    )
-    loader = DataLoader(tubes, batch_size=batch_size, collate_fn=data.collate_fn)
-
-    model = None #load_from_checkpoint(ckpt, device=DEVICE)
-
-    results = {}
-    for j, (sample_idxs, batch) in enumerate(loader):
-        logger.info(f"Running batch {j} of {len(tubes) // batch_size + 1} with {len(sample_idxs)} samples")
-        y = model(batch.to(DEVICE))
-        for i in range(len(sample_idxs)):
-            idx = sample_idxs[i]
-            acc = tubes.accession(idx)
-            results[acc] = y[i].detach().cpu()
-        torch.cuda.empty_cache()
-    logger.info(f"Writing results to {dest}")
-    torch.save(results, dest)
 
 
 if __name__=="__main__":

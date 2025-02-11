@@ -6,14 +6,16 @@ readme = "README.md"
 authors = [
     { name = "O'Fallon, Brendan", email = "brendan.o'fallon@aruplab.com" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = [
+    "comet-ml>=3.49.0",
     "ipykernel>=6.29.5",
-    "numpy>=2.2.2",
+    "numpy>=2.0",
     "pandas>=2.2.3",
     "pyyaml>=6.0.2",
     "torch>=2.6.0",
     "typer>=0.15.1",
+    "umap>=0.1.1",
 ]
 
 [project.scripts]

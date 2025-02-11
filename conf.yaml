@@ -8,6 +8,7 @@ model:
   num_features: 13
   model_dim: 128
   layers: 8
+  heads: 2
 
 
 training:
