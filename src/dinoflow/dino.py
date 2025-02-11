@@ -22,6 +22,7 @@ import logging
 
 from dinoflow.models import TubeEncoder
 from dinoflow import data
+from dinoflow.loss import KoLeoLoss
 from dinoflow.data import scale, shift, shuffle, compose, noise, standardize_range, subsample_events, NoLabelTubes
 
 from dinoflow.util import WarmupCosineLRScheduler, random_sample
@@ -80,36 +81,37 @@ def dino_loss(ys, yt, C, s_temp=1, t_temp=0.5, eps=1e-8):
     return -1 * (tm * torch.log(sm + eps)).sum(dim=1).mean()
 
 
-def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, center_mo, param_mo, teacher_center, lr_schedule):
+def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, center_mo, param_mo, teacher_center, lr_schedule, koleo_loss_weight):
     """
     Conduct a single DINO epoch
     For each batch, augment the data and pass to the student and send un-augmented data to the teacher, the loss
     tries to make them similar
     """
-    enable_autocast = False # 'cuda' in str(DEVICE) # be careful this might break things
+    enable_autocast = 'cuda' in str(DEVICE) # be careful this might break things
     scaler = torch.amp.GradScaler(enabled=enable_autocast)
     device_type = 'cuda' if 'cuda' in str(DEVICE) else 'cpu'
     logger.info(f"Autocast enabled: {enable_autocast}")
     
     epoch_loss_sum = 0
     cos_sim_sum = 0
+    koleoloss = KoLeoLoss()
     for i, batch in enumerate(loader):
-        batch = batch
-
-        # Compute some eval stats...before we do the param update
        
         optimizer.zero_grad()
         # Compute the loss and backprop
         # TODO make loss symmetric? Adjust teacher temp?
         with torch.amp.autocast(enabled=enable_autocast, device_type=device_type):
             # Augment the data and do a forward pass through both the student and teacher models
-            x_s = student_augs(batch).to(DEVICE) # Important to clone since the augmentors modify in-place
+            x_s = student_augs(batch).to(DEVICE)
             y_s  = student(x_s.float())
 
             x_t = teacher_augs(batch).to(DEVICE)
             y_t = teacher(x_t.float())
 
-            loss = dino_loss(y_s, y_t, teacher_center, s_temp=1.0, t_temp=0.9)
+            dino_loss = dino_loss(y_s, y_t, teacher_center, s_temp=1.0, t_temp=0.9)
+            koleo_loss = koleoloss(y_s)
+
+            loss = dino_loss + koleo_loss_weight * koleo_loss
             epoch_loss_sum += loss.item()
 
         scaler.scale(loss).backward()
