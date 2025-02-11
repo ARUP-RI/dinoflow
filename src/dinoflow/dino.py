@@ -94,7 +94,7 @@ def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, 
     
     epoch_loss_sum = 0
     cos_sim_sum = 0
-    koleoloss = KoLeoLoss()
+    koleoloss = KoLeoLoss(device=DEVICE)
     for i, batch in enumerate(loader):
        
         optimizer.zero_grad()
@@ -108,10 +108,10 @@ def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, 
             x_t = teacher_augs(batch).to(DEVICE)
             y_t = teacher(x_t.float())
 
-            dino_loss = dino_loss(y_s, y_t, teacher_center, s_temp=1.0, t_temp=0.9)
+            dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=1.0, t_temp=0.9)
             koleo_loss = koleoloss(y_s)
 
-            loss = dino_loss + koleo_loss_weight * koleo_loss
+            loss = dinoloss + koleo_loss_weight * koleo_loss
             epoch_loss_sum += loss.item()
 
         scaler.scale(loss).backward()
@@ -123,7 +123,7 @@ def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, 
         # Update centering and teacher weights
         with torch.no_grad():
             cos_sim = cosine_similarity_matrix(y_t)
-            logger.info(f"Batch {i}, loss: {loss.item() :.4f} cos sim: {cos_sim.mean().item() :.4f}")
+            logger.info(f"Batch {i}, dino loss: {dinoloss.item() :.4f} KoLeo loss: {koleo_loss.item() :.4f} cos sim: {cos_sim.mean().item() :.4f}")
             cos_sim_sum += cos_sim.mean().item()
             teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
             dist_tot = 0

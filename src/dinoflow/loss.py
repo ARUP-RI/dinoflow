@@ -16,8 +16,9 @@ logger = logging.getLogger(__name__)
 class KoLeoLoss(nn.Module):
     """Kozachenko-Leonenko entropic loss regularizer from Sablayrolles et al. - 2018 - Spreading vectors for similarity search"""
 
-    def __init__(self):
+    def __init__(self, device='cpu'):
         super().__init__()
+        self.device=device
         self.pdist = nn.PairwiseDistance(2, eps=1e-8)
 
     def pairwise_NNs_inner(self, x):
@@ -38,7 +39,8 @@ class KoLeoLoss(nn.Module):
         Args:
             student_output (BxD): backbone output of student
         """
-        with torch.amp.autocast(enabled=False):
+        device_type = 'cuda' if 'cuda' in str(self.device) else 'cpu'
+        with torch.amp.autocast(enabled=False, device_type=device_type):
             student_output = F.normalize(student_output, eps=eps, p=2, dim=-1)
             I = self.pairwise_NNs_inner(student_output)  # noqa: E741
             distances = self.pdist(student_output, student_output[I])  # BxD, BxD -> B
