@@ -7,7 +7,7 @@ data:
 model:
   num_features: 13
   model_dim: 128
-  layers: 4
+  layers: 8
 
 
 training:
@@ -16,10 +16,10 @@ training:
   max_lr: 0.0001
   warmup_iters: 100
   lr_decay_iters: 1000
-  epochs: 10
+  epochs: 100
   checkpoint_freq: 10
   center_momentum: 0.9
-  teacher_param_momentum: 0.999
+  teacher_param_momentum: 0.995
 
 
 normalization_params:

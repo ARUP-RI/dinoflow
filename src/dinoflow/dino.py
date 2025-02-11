@@ -86,7 +86,7 @@ def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, 
     For each batch, augment the data and pass to the student and send un-augmented data to the teacher, the loss
     tries to make them similar
     """
-    enable_autocast = False # 'cuda' in str(DEVICE) # be careful this might break things
+    enable_autocast = 'cuda' in str(DEVICE) # be careful this might break things
     scaler = torch.amp.GradScaler(enabled=enable_autocast)
     device_type = 'cuda' if 'cuda' in str(DEVICE) else 'cpu'
     logger.info(f"Autocast enabled: {enable_autocast}")
@@ -121,6 +121,7 @@ def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, 
         # Update centering and teacher weights
         with torch.no_grad():
             cos_sim = cosine_similarity_matrix(y_t)
+            logger.info(f"Batch {i}, loss: {loss.item() :.4f} cos sim: {cos_sim.mean().item() :.4f}")
             cos_sim_sum += cos_sim.mean().item()
             teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
             dist_tot = 0
@@ -257,8 +258,6 @@ def train_dino(conf, run_name):
 
     #logger.info(f"Proc: {os.getpid()} device: {device_id} w: {student.module.backbone.embedding[0].weight[0, :]}")
     for epoch in range(conf['training']['epochs']):
-        
-        #metrics.update(self_mean=augmean, other_mean=diffmean)
 
         teacher_center, loss, cosine_sim = dino_epoch(loader, teacher, student, optimizer,
                    student_augs=student_augs,
@@ -268,10 +267,10 @@ def train_dino(conf, run_name):
                    teacher_center=teacher_center,
                    lr_schedule=lrschedule,
                    )
-        logger.info(f"Epoch #{epoch} Loss: {loss :.4f}  cos. sim: {cosine_sim :.4f}")
+        logger.info(f"Epoch #{epoch} LR: {lrschedule.get_lr()[0] :.5f} Loss: {loss :.4f}  cos. sim: {cosine_sim :.4f}")
 
 
-        if (epoch % checkpoint_freq == 0 or epoch == (conf['epochs'] - 1)) and int(os.environ.get('RANK', 0)) == 0:
+        if (epoch % checkpoint_freq == 0 or epoch == (conf['training']['epochs'] - 1)) and int(os.environ.get('RANK', 0)) == 0:
             if isinstance(student, DDP):
                 student_unwrapped = student.module
             else:
@@ -281,8 +280,6 @@ def train_dino(conf, run_name):
                 "teacher": teacher.state_dict(),
                 "opt": optimizer.state_dict(),
                 "teacher_center": teacher_center,
-                "feat_means": conf['feat_means'],
-                "feat_stds": conf['feat_stds'],
             }
             dest = f"{run_name}_epoch{epoch}.pt"
             logger.info(f"Saving checkpoint for epoch {epoch} to {dest}")
