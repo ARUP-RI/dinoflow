@@ -30,11 +30,8 @@ from dinoflow.util import WarmupCosineLRScheduler, random_sample
 
 app = typer.Typer(pretty_exceptions_show_locals=False)
 
-USE_DDP = int(os.environ.get('RANK', -1)) >= 0 and os.environ.get('WORLD_SIZE') is not None
-MASTER_PROCESS = (not USE_DDP) or os.environ.get('RANK') == '0'
+MASTER_PROCESS = os.environ.get('RANK', '0') == '0'
 DEVICE = None # This is set in the 'train' method
-
-
 
 
 logger = logging.getLogger("dinoflow")
@@ -296,7 +293,7 @@ def train_dino(conf, run_name):
             experiment.log_metric("cosine_sim", cosine_sim, epoch=epoch)
             experiment.log_metric("lr", lrschedule.get_lr()[0], epoch=epoch)
 
-        if (epoch % checkpoint_freq == 0 or epoch == (conf['training']['epochs'] - 1)) and int(os.environ.get('RANK', 0)) == 0:
+        if (epoch % checkpoint_freq == 0 or epoch == (conf['training']['epochs'] - 1)) and MASTER_PROCESS:
             if isinstance(student, DDP):
                 student_unwrapped = student.module
             else:
@@ -333,8 +330,9 @@ def train(config, tube_type: str = None, run_name=None):
     result_dir.mkdir(parents=True, exist_ok=True)
 
     if experiment is not None:
+        if run_name is not None:
+            experiment.set_name(run_name)
         experiment.log_parameters(conf)
-        
 
     os.chdir(result_dir)
     with open("conf.yaml", "w") as fh:
