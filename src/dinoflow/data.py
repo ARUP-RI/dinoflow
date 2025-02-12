@@ -380,7 +380,11 @@ class NoLabelTubes(Dataset):
     def __getitem__(self, i):
         try:
             item = torch.load(self.samples[i])
-            return item[self.return_key]
+            if item[self.return_key].shape[0] > self.min_events:
+                idx = torch.randperm(item[self.return_key].shape[0])[0:self.min_events]
+                return item[self.return_key][idx]
+            else:
+                return item[self.return_key]
         except Exception as ex:
             raise Exception(f"Failed to load item {self.samples[i]}: {str(ex)}")
         
