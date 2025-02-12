@@ -23,7 +23,7 @@ import logging
 
 from dinoflow.models import TubeEncoder
 from dinoflow import data
-from dinoflow.loss import KoLeoLoss
+from dinoflow.loss import KoLeoLoss, CosineSimLoss
 from dinoflow.data import scale, shift, shuffle, compose, noise, standardize_range, subsample_events, NoLabelTubes
 
 from dinoflow.util import WarmupCosineLRScheduler, random_sample
@@ -75,7 +75,7 @@ def teacher_student_cosine_similarity(ys, yt):
     # Compute cosine similarity using matrix multiplication
     S = ys_norm.T @ yt_norm  # (n x m) @ (m x n) -> (n x n)
 
-    print(S[0:10, 0:10].cpu().numpy())
+    print(S[0:10, 0:10].cpu().numpy() + "\n")
 
     # On-diagonal elements represent the same sample processed through the teacher and student, so they should have high similarity
     # off diagonal elements represent different samples processed through the teacher and student, so they should have low similarity
@@ -105,7 +105,11 @@ def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, 
     
     epoch_loss_sum = 0
     cos_sim_sum = 0
+    yt_self_loss_sum = 0
+    yt_other_loss_sum = 0
     koleoloss = KoLeoLoss(device=DEVICE)
+    cos_sim_loss = CosineSimLoss(device=DEVICE)
+    cs_loss_sum = 0
     for i, batch in enumerate(loader):
        
         optimizer.zero_grad()
@@ -120,9 +124,10 @@ def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, 
             y_t = teacher(x_t.float())
 
             dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=1.0, t_temp=0.9)
-            koleo_loss = koleoloss(y_s)
-
-            loss = dinoloss + koleo_loss_weight * koleo_loss
+            # koleo_loss = koleoloss(y_s)
+            cos_sim_loss_val = cos_sim_loss(y_s, y_t)
+            cs_loss_sum += cos_sim_loss_val.item()
+            loss = dinoloss + koleo_loss_weight * cos_sim_loss_val
             epoch_loss_sum += loss.item()
 
         scaler.scale(loss).backward()
@@ -135,7 +140,9 @@ def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, 
         with torch.no_grad():
             cos_sim = cosine_similarity_matrix(y_t)
             self_cos_sim, off_diag_cos_sim = teacher_student_cosine_similarity(y_s, y_t)
-            logger.info(f"Batch {i}, loss: {loss.item() :.4f} KoLeo: {koleo_loss.item() :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} off_diag_cos_sim: {off_diag_cos_sim.item() :.4f}")
+            yt_self_loss_sum += self_cos_sim.item()
+            yt_other_loss_sum += off_diag_cos_sim.item()
+            logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} CS loss: {cs_loss_sum.item() / i :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} off_diag_cos_sim: {off_diag_cos_sim.item() :.4f}")
             cos_sim_sum += cos_sim.mean().item()
             teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
             dist_tot = 0
@@ -148,7 +155,14 @@ def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, 
 
 
     epoch_loss = epoch_loss_sum / len(loader)
-    return teacher_center, epoch_loss, cos_sim_sum / len(loader)
+    return {
+        "teacher_center": teacher_center,
+        "epoch_loss": epoch_loss,
+        "cosine_sim": cos_sim_sum / len(loader),
+        "yt_self_loss": yt_self_loss_sum / len(loader),
+        "yt_other_loss": yt_other_loss_sum / len(loader),
+        "cs_loss": cs_loss_sum / len(loader)
+    }
 
 
 def init_ddp():
@@ -197,7 +211,7 @@ def train_dino(conf, run_name):
 
     tubes = data.NoLabelTubes(
         dirpath=conf['data']['data_dir'],
-        min_events=conf['data']['input_events'],
+        min_events=conf['data']['input_events'] * 4,
         return_key=conf['tube_type'],
     )
     
@@ -253,14 +267,14 @@ def train_dino(conf, run_name):
     feat_means = None
     feat_stds = None
     if conf['tube_type'] == 't':
-        feat_means = torch.tensor(conf['normalization_params']['t_feat_means']).to(DEVICE)
-        feat_stds = torch.tensor(conf['normalization_params']['t_feat_stds']).to(DEVICE)
+        feat_means = torch.tensor(conf['normalization_params']['t_feat_means'])
+        feat_stds = torch.tensor(conf['normalization_params']['t_feat_stds'])
     elif conf['tube_type'] == 'm':
-        feat_means = torch.tensor(conf['normalization_params']['m_feat_means']).to(DEVICE)
-        feat_stds = torch.tensor(conf['normalization_params']['m_feat_stds']).to(DEVICE)
+        feat_means = torch.tensor(conf['normalization_params']['m_feat_means'])
+        feat_stds = torch.tensor(conf['normalization_params']['m_feat_stds'])
     elif conf['tube_type'] == 'b':
-        feat_means = torch.tensor(conf['normalization_params']['b_feat_means']).to(DEVICE)
-        feat_stds = torch.tensor(conf['normalization_params']['b_feat_stds']).to(DEVICE)
+        feat_means = torch.tensor(conf['normalization_params']['b_feat_means'])
+        feat_stds = torch.tensor(conf['normalization_params']['b_feat_stds'])
 
     student_augs = compose([
         partial(data.subsample_batch, num_events=conf['data']['input_events']),
@@ -278,7 +292,7 @@ def train_dino(conf, run_name):
     #logger.info(f"Proc: {os.getpid()} device: {device_id} w: {student.module.backbone.embedding[0].weight[0, :]}")
     for epoch in range(conf['training']['epochs']):
 
-        teacher_center, loss, cosine_sim = dino_epoch(loader, teacher, student, optimizer,
+        epoch_results = dino_epoch(loader, teacher, student, optimizer,
                    student_augs=student_augs,
                    teacher_augs=teacher_augs,
                    center_mo=conf['training']['center_momentum'],
@@ -287,11 +301,18 @@ def train_dino(conf, run_name):
                    lr_schedule=lrschedule,
                    koleo_loss_weight=conf['training']['koleo_loss_weight'],
                    )
-        logger.info(f"Epoch #{epoch} LR: {lrschedule.get_lr()[0] :.5f} Loss: {loss :.4f}  cos. sim: {cosine_sim :.4f}")
+        teacher_center = epoch_results['teacher_center']
+        loss = epoch_results['epoch_loss']
+        cosine_sim = epoch_results['cosine_sim']
+        ts_self_loss = epoch_results['yt_self_loss']
+        ts_other_loss = epoch_results['yt_other_loss']
+        logger.info(f"Epoch #{epoch} LR: {lrschedule.get_lr()[0] :.5f} Loss: {loss :.4f}  cos. sim: {cosine_sim :.4f} yt_self_loss: {ts_self_loss :.4f} yt_other_loss: {ts_other_loss :.4f}")
         if experiment is not None:
             experiment.log_metric("loss", loss, epoch=epoch)
             experiment.log_metric("cosine_sim", cosine_sim, epoch=epoch)
             experiment.log_metric("lr", lrschedule.get_lr()[0], epoch=epoch)
+            experiment.log_metric("ts_self_loss", ts_self_loss, epoch=epoch)
+            experiment.log_metric("ts_other_loss", ts_other_loss, epoch=epoch)
 
         if (epoch % checkpoint_freq == 0 or epoch == (conf['training']['epochs'] - 1)) and MASTER_PROCESS:
             if isinstance(student, DDP):

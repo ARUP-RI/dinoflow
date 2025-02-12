@@ -46,3 +46,28 @@ class KoLeoLoss(nn.Module):
             distances = self.pdist(student_output, student_output[I])  # BxD, BxD -> B
             loss = -torch.log(distances + eps).mean()
         return loss
+    
+
+class CosineSimLoss(nn.Module):
+    def __init__(self, device='cpu'):
+        super().__init__()
+        self.device = device
+
+    def forward(self, ys, yt):
+        """
+        Args:
+            ys (BxD): backbone output of student
+            yt (BxD): backbone output of teacher
+        """
+        # Normalize each column (vector) to unit norm
+        ys_norm = ys / (ys.norm(dim=0, keepdim=True) + 1e-8)  # Avoid division by zero
+        yt_norm = yt / (yt.norm(dim=0, keepdim=True) + 1e-8)  # Avoid division by zero
+
+        # Compute cosine similarity using matrix multiplication
+        S = ys_norm.T @ yt_norm  # (n x m) @ (m x n) -> (n x n)
+
+        # On-diagonal elements represent the same sample processed through the teacher and student, so they should have high similarity
+        # off diagonal elements represent different samples processed through the teacher and student, so they should have low similarity
+        on_diagonal_mean = S.diagonal().mean()
+        off_diagonal_mean = (S.sum() - S.diagonal().sum()) / (S.numel() - S.shape[0])
+        return off_diagonal_mean - on_diagonal_mean
