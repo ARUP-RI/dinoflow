@@ -6,13 +6,13 @@ data:
 
 model:
   num_features: 13
-  model_dim: 512
+  model_dim: 256
   layers: 8
   heads: 4
 
 
 training:
-  batch_size: 64
+  batch_size: 128
   min_lr: 0.000001
   max_lr: 0.0001
   warmup_iters: 10000

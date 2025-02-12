@@ -275,11 +275,8 @@ def train_dino(conf, run_name):
     elif conf['tube_type'] == 'b':
         feat_means = torch.tensor(conf['normalization_params']['b_feat_means'])
         feat_stds = torch.tensor(conf['normalization_params']['b_feat_stds'])
-<<<<<<< HEAD
     else:
         raise ValueError("Unknown tube type")
-=======
->>>>>>> feab0c99fb80d5aa812737947fd3d182132619c9
 
     student_augs = compose([
         partial(data.subsample_batch, num_events=conf['data']['input_events']),
