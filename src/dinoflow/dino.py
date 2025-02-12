@@ -248,12 +248,26 @@ def train_dino(conf, run_name):
     model_trainable_params = sum(p.numel() for p in student.parameters() if p.requires_grad)
     logger.info(f"Model total params: {model_tot_params}, trainable params: {model_trainable_params}")
 
+    feat_means = None
+    feat_stds = None
+    if conf['tube_type'] == 't':
+        feat_means = conf['normalization_params']['t_feat_means']
+        feat_stds = conf['normalization_params']['t_feat_stds']
+    elif conf['tube_type'] == 'm':
+        feat_means = conf['normalization_params']['m_feat_means']
+        feat_stds = conf['normalization_params']['m_feat_stds']
+    elif conf['tube_type'] == 'b':
+        feat_means = conf['normalization_params']['b_feat_means']
+        feat_stds = conf['normalization_params']['b_feat_stds']
+
     student_augs = compose([
         partial(data.subsample_batch, num_events=conf['data']['input_events']),
+        partial(data.standardize_range, means=feat_means, stds=feat_stds)
     ])
 
     teacher_augs = compose([
         partial(data.subsample_batch, num_events=conf['data']['input_events']),
+        partial(data.standardize_range, means=feat_means, stds=feat_stds)
     ])
 
     
@@ -290,6 +304,8 @@ def train_dino(conf, run_name):
                 "modelconf": conf['model'],
                 "trainingconf": conf['training'],
                 "tube_type": conf['tube_type'],
+                "feat_means": feat_means,
+                "feat_stds": feat_stds
             }
             dest = f"{run_name}_epoch{epoch}.pt"
             logger.info(f"Saving checkpoint for epoch {epoch} to {dest}")
