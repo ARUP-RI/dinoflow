@@ -21,7 +21,7 @@ training:
   checkpoint_freq: 10
   center_momentum: 0.9
   teacher_param_momentum: 0.995
-  koleo_loss_weight: 0.25
+  koleo_loss_weight: 0.01
 
 
 
