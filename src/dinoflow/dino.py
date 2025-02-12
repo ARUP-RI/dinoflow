@@ -78,6 +78,8 @@ def teacher_student_cosine_similarity(ys, yt):
     # Compute cosine similarity using matrix multiplication
     S = ys_norm.T @ yt_norm  # (n x m) @ (m x n) -> (n x n)
 
+    print(S[0:10, 0:10].cpu().numpy())
+
     # On-diagonal elements represent the same sample processed through the teacher and student, so they should have high similarity
     # off diagonal elements represent different samples processed through the teacher and student, so they should have low similarity
     on_diagonal_mean = S.diagonal().mean()
@@ -254,14 +256,14 @@ def train_dino(conf, run_name):
     feat_means = None
     feat_stds = None
     if conf['tube_type'] == 't':
-        feat_means = conf['normalization_params']['t_feat_means']
-        feat_stds = conf['normalization_params']['t_feat_stds']
+        feat_means = torch.tensor(conf['normalization_params']['t_feat_means']).to(DEVICE)
+        feat_stds = torch.tensor(conf['normalization_params']['t_feat_stds']).to(DEVICE)
     elif conf['tube_type'] == 'm':
-        feat_means = conf['normalization_params']['m_feat_means']
-        feat_stds = conf['normalization_params']['m_feat_stds']
+        feat_means = torch.tensor(conf['normalization_params']['m_feat_means']).to(DEVICE)
+        feat_stds = torch.tensor(conf['normalization_params']['m_feat_stds']).to(DEVICE)
     elif conf['tube_type'] == 'b':
-        feat_means = conf['normalization_params']['b_feat_means']
-        feat_stds = conf['normalization_params']['b_feat_stds']
+        feat_means = torch.tensor(conf['normalization_params']['b_feat_means']).to(DEVICE)
+        feat_stds = torch.tensor(conf['normalization_params']['b_feat_stds']).to(DEVICE)
 
     student_augs = compose([
         partial(data.subsample_batch, num_events=conf['data']['input_events']),
