@@ -75,7 +75,7 @@ def teacher_student_cosine_similarity(ys, yt):
     # Compute cosine similarity using matrix multiplication
     S = ys_norm.T @ yt_norm  # (n x m) @ (m x n) -> (n x n)
 
-    print(S[0:10, 0:10].cpu().numpy())
+    print(str(S[0:10, 0:10].cpu().numpy()) + "\n")
 
     # On-diagonal elements represent the same sample processed through the teacher and student, so they should have high similarity
     # off diagonal elements represent different samples processed through the teacher and student, so they should have low similarity
@@ -135,7 +135,7 @@ def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, 
         with torch.no_grad():
             cos_sim = cosine_similarity_matrix(y_t)
             self_cos_sim, off_diag_cos_sim = teacher_student_cosine_similarity(y_s, y_t)
-            logger.info(f"Batch {i}, loss: {loss.item() :.4f} KoLeo: {koleo_loss.item() :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} off_diag_cos_sim: {off_diag_cos_sim.item() :.4f}")
+            logger.info(f"Batch {i}, loss: {loss.item() :.4f} Dino: {dinoloss.item() :.4f} KoLeo: {koleo_loss.item() :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} off_diag_cos_sim: {off_diag_cos_sim.item() :.4f}")
             cos_sim_sum += cos_sim.mean().item()
             teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
             dist_tot = 0
@@ -183,7 +183,7 @@ def train_dino(conf, run_name):
 
     # When using DDP multiple processes are created, one for each GPU. Since some initialization params are random
     # (like the student weights), we need to make sure they are exactly the same across all processes
-    torch.manual_seed(1781) # Important - when we initialize weights they need to be the same across all processes
+    torch.manual_seed(1785) # Important - when we initialize weights they need to be the same across all processes
 
     # Initialize DDP
     device_id = init_ddp()
@@ -253,14 +253,16 @@ def train_dino(conf, run_name):
     feat_means = None
     feat_stds = None
     if conf['tube_type'] == 't':
-        feat_means = torch.tensor(conf['normalization_params']['t_feat_means']).to(DEVICE)
-        feat_stds = torch.tensor(conf['normalization_params']['t_feat_stds']).to(DEVICE)
+        feat_means = torch.tensor(conf['normalization_params']['t_feat_means'])
+        feat_stds = torch.tensor(conf['normalization_params']['t_feat_stds'])
     elif conf['tube_type'] == 'm':
-        feat_means = torch.tensor(conf['normalization_params']['m_feat_means']).to(DEVICE)
-        feat_stds = torch.tensor(conf['normalization_params']['m_feat_stds']).to(DEVICE)
+        feat_means = torch.tensor(conf['normalization_params']['m_feat_means'])
+        feat_stds = torch.tensor(conf['normalization_params']['m_feat_stds'])
     elif conf['tube_type'] == 'b':
-        feat_means = torch.tensor(conf['normalization_params']['b_feat_means']).to(DEVICE)
-        feat_stds = torch.tensor(conf['normalization_params']['b_feat_stds']).to(DEVICE)
+        feat_means = torch.tensor(conf['normalization_params']['b_feat_means'])
+        feat_stds = torch.tensor(conf['normalization_params']['b_feat_stds'])
+    else:
+        raise ValueError("Unknown tube type")
 
     student_augs = compose([
         partial(data.subsample_batch, num_events=conf['data']['input_events']),
