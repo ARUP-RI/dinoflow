@@ -24,7 +24,7 @@ import logging
 from dinoflow.models import TubeEncoder
 from dinoflow import data
 from dinoflow.loss import KoLeoLoss, CosineSimLoss
-from dinoflow.data import scale, shift, shuffle, compose, noise, standardize_range, subsample_events, NoLabelTubes
+from dinoflow.data import scale, shift, shuffle, compose, noise, standardize_range, subsample_events, NoLabelTubes, subsample_batch
 
 from dinoflow.util import WarmupCosineLRScheduler, random_sample
 
@@ -92,7 +92,24 @@ def dino_loss(ys, yt, C, s_temp=1, t_temp=0.5, eps=1e-8):
     return -1 * (tm * torch.log(sm + eps)).sum(dim=1).mean()
 
 
-def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, center_mo, param_mo, teacher_center, lr_schedule, koleo_loss_weight):
+def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_reps):
+    """
+    Sample n_teacher_events for each member of the batch, then from those events repeatedly sample n_student_events
+    n_student_reps times 
+    """
+    assert n_student_events < n_teacher_events
+    teacher_events = subsample_batch(batch, n_teacher_events)
+    all_student_events = []
+    for i in range(n_student_reps):
+        student_events = subsample_events(teacher_events, n_student_events)
+        all_student_events.append(student_events)
+    
+    teacher_events = teacher_events.repeat(n_student_reps, 1, 1)
+    all_student_events = torch.cat(all_student_events, dim=0)
+    return teacher_events, all_student_events
+
+
+def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_events, n_student_reps, center_mo, param_mo, teacher_center, lr_schedule, koleo_loss_weight):
     """
     Conduct a single DINO epoch
     For each batch, augment the data and pass to the student and send un-augmented data to the teacher, the loss
@@ -111,17 +128,13 @@ def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, 
     cos_sim_loss = CosineSimLoss(device=DEVICE)
     cs_loss_sum = 0
     for i, batch in enumerate(loader):
-       
         optimizer.zero_grad()
-        # Compute the loss and backprop
-        # TODO make loss symmetric? Adjust teacher temp?
-        with torch.amp.autocast(enabled=enable_autocast, device_type=device_type):
-            # Augment the data and do a forward pass through both the student and teacher models
-            x_s = student_augs(batch).to(DEVICE)
-            y_s  = student(x_s.float())
+        teacher_events, student_events = student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_reps)
 
-            x_t = teacher_augs(batch).to(DEVICE)
-            y_t = teacher(x_t.float())
+        with torch.amp.autocast(enabled=enable_autocast, device_type=device_type):
+            # Augment the data and do a forward pass through both the student and teacher models            
+            y_s  = student(student_events.to(DEVICE).float())
+            y_t = teacher(teacher_events.to(DEVICE).float())
 
             dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=1.0, t_temp=0.9)
             # koleo_loss = koleoloss(y_s)
@@ -142,7 +155,7 @@ def dino_epoch(loader, teacher, student, optimizer, student_augs, teacher_augs, 
             self_cos_sim, off_diag_cos_sim = teacher_student_cosine_similarity(y_s, y_t)
             yt_self_loss_sum += self_cos_sim.item()
             yt_other_loss_sum += off_diag_cos_sim.item()
-            logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} CS loss: {cs_loss_sum.item() / i :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} off_diag_cos_sim: {off_diag_cos_sim.item() :.4f}")
+            logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} CS loss: {cos_sim_loss_val.item() :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} off_diag_cos_sim: {off_diag_cos_sim.item() :.4f}")
             cos_sim_sum += cos_sim.mean().item()
             teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
             dist_tot = 0
@@ -276,15 +289,15 @@ def train_dino(conf, run_name):
         feat_means = torch.tensor(conf['normalization_params']['b_feat_means'])
         feat_stds = torch.tensor(conf['normalization_params']['b_feat_stds'])
 
-    student_augs = compose([
-        partial(data.subsample_batch, num_events=conf['data']['input_events']),
-        partial(data.standardize_range, means=feat_means, stds=feat_stds)
-    ])
+    # student_augs = compose([
+    #     partial(data.subsample_batch, num_events=conf['data']['input_events']),
+    #     partial(data.standardize_range, means=feat_means, stds=feat_stds)
+    # ])
 
-    teacher_augs = compose([
-        partial(data.subsample_batch, num_events=conf['data']['input_events']),
-        partial(data.standardize_range, means=feat_means, stds=feat_stds)
-    ])
+    # teacher_augs = compose([
+    #     partial(data.subsample_batch, num_events=conf['data']['input_events']),
+    #     partial(data.standardize_range, means=feat_means, stds=feat_stds)
+    # ])
 
     
     checkpoint_freq = conf['training']['checkpoint_freq']
@@ -293,8 +306,9 @@ def train_dino(conf, run_name):
     for epoch in range(conf['training']['epochs']):
 
         epoch_results = dino_epoch(loader, teacher, student, optimizer,
-                   student_augs=student_augs,
-                   teacher_augs=teacher_augs,
+                   n_teacher_events=conf['training']['n_teacher_events'],
+                   n_student_events=conf['training']['n_student_events'],
+                   n_student_reps=conf['training']['n_student_reps'],
                    center_mo=conf['training']['center_momentum'],
                    param_mo=conf['training']['teacher_param_momentum'],
                    teacher_center=teacher_center,

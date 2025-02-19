@@ -66,6 +66,10 @@ class CosineSimLoss(nn.Module):
         # Compute cosine similarity using matrix multiplication
         S = ys_norm.T @ yt_norm  # (n x m) @ (m x n) -> (n x n)
 
+        # Elementwise product of S with itself, we do this to make all values positive, which
+        # makes it so the means are small only if the magnitudes of each value are small (instead of a mix of -1s and +1s)
+        S = S * S
+
         # On-diagonal elements represent the same sample processed through the teacher and student, so they should have high similarity
         # off diagonal elements represent different samples processed through the teacher and student, so they should have low similarity
         on_diagonal_mean = S.diagonal().mean()
