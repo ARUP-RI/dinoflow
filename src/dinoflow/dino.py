@@ -75,7 +75,7 @@ def teacher_student_cosine_similarity(ys, yt):
     # Compute cosine similarity using matrix multiplication
     S = ys_norm.T @ yt_norm  # (n x m) @ (m x n) -> (n x n)
 
-    print(S[0:10, 0:10].cpu().numpy() + "\n")
+    print(str(S[0:10, 0:10].cpu().numpy()) + "\n")
 
     # On-diagonal elements represent the same sample processed through the teacher and student, so they should have high similarity
     # off diagonal elements represent different samples processed through the teacher and student, so they should have low similarity
@@ -155,7 +155,7 @@ def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_
             self_cos_sim, off_diag_cos_sim = teacher_student_cosine_similarity(y_s, y_t)
             yt_self_loss_sum += self_cos_sim.item()
             yt_other_loss_sum += off_diag_cos_sim.item()
-            logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} CS loss: {cos_sim_loss_val.item() :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} off_diag_cos_sim: {off_diag_cos_sim.item() :.4f}")
+            logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} CS loss: {cos_sim_loss_val.item()  :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} off_diag_cos_sim: {off_diag_cos_sim.item() :.4f}")
             cos_sim_sum += cos_sim.mean().item()
             teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
             dist_tot = 0
@@ -210,7 +210,7 @@ def train_dino(conf, run_name):
 
     # When using DDP multiple processes are created, one for each GPU. Since some initialization params are random
     # (like the student weights), we need to make sure they are exactly the same across all processes
-    torch.manual_seed(1781) # Important - when we initialize weights they need to be the same across all processes
+    torch.manual_seed(1785) # Important - when we initialize weights they need to be the same across all processes
 
     # Initialize DDP
     device_id = init_ddp()
@@ -230,28 +230,36 @@ def train_dino(conf, run_name):
     
     loader = DataLoader(tubes, batch_size=conf['training']['batch_size'], shuffle=True, pin_memory=True, num_workers=4, collate_fn=data.collate_fn)
 
-    student = TubeEncoder(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads']).to(DEVICE)
-
-    teacher = TubeEncoder(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads']).to(DEVICE)
-
-    for p in teacher.parameters():
-        p.requires_grad = False
-
-    optimizer = torch.optim.AdamW(student.parameters(), lr=conf['training']['min_lr'])
-
     # Initialize here, but may be overwritten by checkpoint
     teacher_center = torch.zeros(conf['model']['model_dim']).to(DEVICE)
+    start_epoch = 0
 
     # Load from checkpoint if present
     if conf.get('checkpoint'):
         logger.info(f"Loading model from {conf['checkpoint']}")
-        ckpt = torch.load(conf['checkpoint'], map_location=DEVICE)
+        ckpt = torch.load(conf['checkpoint'], weights_only=False, map_location=DEVICE)
+        logger.info(f"Found model configuration: {ckpt['modelconf']}")
+        modelconf = ckpt['modelconf']
+        student = TubeEncoder(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads']).to(DEVICE)
+        teacher = TubeEncoder(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads']).to(DEVICE)
+        conf['model'] = modelconf
+        start_epoch = conf.get("epoch", 0)
+        optimizer = torch.optim.AdamW(student.parameters(), lr=conf['training']['min_lr'])
         student.load_state_dict(ckpt['student'])
         teacher.load_state_dict(ckpt['teacher'])
         optimizer.load_state_dict(ckpt['opt'])
         if ckpt.get('teacher_center') is not None:
             teacher_center = ckpt['teacher_center']
- 
+    else:
+        student = TubeEncoder(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads']).to(DEVICE)
+        teacher = TubeEncoder(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads']).to(DEVICE)
+        optimizer = torch.optim.AdamW(student.parameters(), lr=conf['training']['min_lr'])
+
+    for p in teacher.parameters():
+        p.requires_grad = False
+
+
+
     if device_id is not None:
         student = DDP(student.to(device_id), device_ids=[device_id])
         if not conf.get('checkpoint'):
@@ -288,6 +296,8 @@ def train_dino(conf, run_name):
     elif conf['tube_type'] == 'b':
         feat_means = torch.tensor(conf['normalization_params']['b_feat_means'])
         feat_stds = torch.tensor(conf['normalization_params']['b_feat_stds'])
+    else:
+        raise ValueError("Unknown tube type")
 
     # student_augs = compose([
     #     partial(data.subsample_batch, num_events=conf['data']['input_events']),
@@ -303,7 +313,7 @@ def train_dino(conf, run_name):
     checkpoint_freq = conf['training']['checkpoint_freq']
 
     #logger.info(f"Proc: {os.getpid()} device: {device_id} w: {student.module.backbone.embedding[0].weight[0, :]}")
-    for epoch in range(conf['training']['epochs']):
+    for epoch in range(start_epoch, start_epoch + conf['training']['epochs']):
 
         epoch_results = dino_epoch(loader, teacher, student, optimizer,
                    n_teacher_events=conf['training']['n_teacher_events'],
@@ -342,7 +352,8 @@ def train_dino(conf, run_name):
                 "trainingconf": conf['training'],
                 "tube_type": conf['tube_type'],
                 "feat_means": feat_means,
-                "feat_stds": feat_stds
+                "feat_stds": feat_stds,
+                "epoch": epoch,
             }
             dest = f"{run_name}_epoch{epoch}.pt"
             logger.info(f"Saving checkpoint for epoch {epoch} to {dest}")
@@ -350,11 +361,13 @@ def train_dino(conf, run_name):
 
 
 @app.command()
-def train(config, tube_type: str = None, run_name=None):
+def train(config, tube_type: str = None, run_name=None, checkpoint: str = None):
     logger.info(f"Loading config from {config}")
     conf = yaml.safe_load(open(config))
     if tube_type is not None:
         conf['tube_type'] = tube_type
+    if checkpoint is not None:
+        conf['checkpoint'] = checkpoint
     
     assert conf['tube_type'], f"Tube type not specified in config"
 
