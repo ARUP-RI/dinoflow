@@ -67,7 +67,7 @@ def cosine_similarity_matrix(X):
     return S
 
 
-def teacher_student_cosine_similarity(ys, yt):
+def teacher_student_cosine_similarity(ys, yt, emit=False):
     # Normalize each column (vector) to unit norm
     ys_norm = ys / (ys.norm(dim=0, keepdim=True) + 1e-8)  # Avoid division by zero
     yt_norm = yt / (yt.norm(dim=0, keepdim=True) + 1e-8)  # Avoid division by zero
@@ -75,7 +75,9 @@ def teacher_student_cosine_similarity(ys, yt):
     # Compute cosine similarity using matrix multiplication
     S = ys_norm.T @ yt_norm  # (n x m) @ (m x n) -> (n x n)
 
-    print(str(S[0:10, 0:10].cpu().numpy()) + "\n")
+ 
+    if emit:
+        print(str(S[0:10, 0:10].cpu().numpy()) + "\n")
 
     # On-diagonal elements represent the same sample processed through the teacher and student, so they should have high similarity
     # off diagonal elements represent different samples processed through the teacher and student, so they should have low similarity
@@ -118,7 +120,6 @@ def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_
     enable_autocast = 'cuda' in str(DEVICE) # be careful this might break things
     scaler = torch.amp.GradScaler(enabled=enable_autocast)
     device_type = 'cuda' if 'cuda' in str(DEVICE) else 'cpu'
-    logger.info(f"Autocast enabled: {enable_autocast}")
     
     epoch_loss_sum = 0
     cos_sim_sum = 0
@@ -129,20 +130,24 @@ def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_
     cs_loss_sum = 0
     for i, batch in enumerate(loader):
         optimizer.zero_grad()
+        logger.debug("Generating teacher and student samples")
         teacher_events, student_events = student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_reps)
 
         with torch.amp.autocast(enabled=enable_autocast, device_type=device_type):
-            # Augment the data and do a forward pass through both the student and teacher models            
+            # Augment the data and do a forward pass through both the student and teacher models    
+            logger.debug("Running student")
             y_s  = student(student_events.to(DEVICE).float())
+            logger.debug("Running teacher")
             y_t = teacher(teacher_events.to(DEVICE).float())
-
+            logger.debug("Computing loss")
             dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=1.0, t_temp=0.9)
-            # koleo_loss = koleoloss(y_s)
+            koleo_loss = koleoloss(y_s)
             cos_sim_loss_val = cos_sim_loss(y_s, y_t)
             cs_loss_sum += cos_sim_loss_val.item()
-            loss = dinoloss + koleo_loss_weight * cos_sim_loss_val
+            loss = dinoloss + koleo_loss_weight * koleo_loss
             epoch_loss_sum += loss.item()
 
+        logger.debug("Backprop")
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
@@ -150,21 +155,23 @@ def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_
             lr_schedule.step()
 
         # Update centering and teacher weights
-        with torch.no_grad():
-            cos_sim = cosine_similarity_matrix(y_t)
-            self_cos_sim, off_diag_cos_sim = teacher_student_cosine_similarity(y_s, y_t)
-            yt_self_loss_sum += self_cos_sim.item()
-            yt_other_loss_sum += off_diag_cos_sim.item()
-            logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} CS loss: {cos_sim_loss_val.item()  :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} off_diag_cos_sim: {off_diag_cos_sim.item() :.4f}")
-            cos_sim_sum += cos_sim.mean().item()
-            teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
-            dist_tot = 0
-            param_tot = 0
-            for param_s, param_t in zip(student.parameters(), teacher.parameters()):
-                d = param_t.data - param_s.detach().data
-                dist_tot += d.sum()
-                param_tot += d.numel()
-                param_t.data.mul_(param_mo).add_((1 - param_mo) * param_s.detach().data)
+        if i%10 == 0:
+            with torch.no_grad():
+                cos_sim = cosine_similarity_matrix(y_t)
+                self_cos_sim, off_diag_cos_sim = teacher_student_cosine_similarity(y_s, y_t)
+                yt_self_loss_sum += self_cos_sim.item()
+                yt_other_loss_sum += off_diag_cos_sim.item()
+                logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} CS loss: {cos_sim_loss_val.item()  :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} off_diag_cos_sim: {off_diag_cos_sim.item() :.4f}")
+                cos_sim_sum += cos_sim.mean().item()
+
+        teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
+        dist_tot = 0
+        param_tot = 0
+        for param_s, param_t in zip(student.parameters(), teacher.parameters()):
+            d = param_t.data - param_s.detach().data
+            dist_tot += d.sum()
+            param_tot += d.numel()
+            param_t.data.mul_(param_mo).add_((1 - param_mo) * param_s.detach().data)
 
 
     epoch_loss = epoch_loss_sum / len(loader)

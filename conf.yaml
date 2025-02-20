@@ -6,13 +6,13 @@ data:
 
 model:
   num_features: 13
-  model_dim: 256
+  model_dim: 512
   layers: 8
   heads: 4
 
 
 training:
-  batch_size: 128
+  batch_size: 200
   min_lr: 0.000001
   max_lr: 0.00025
   warmup_iters: 5000
@@ -21,7 +21,10 @@ training:
   checkpoint_freq: 10
   center_momentum: 0.99
   teacher_param_momentum: 0.999
-  koleo_loss_weight: 5.0
+  koleo_loss_weight: 0.0
+  n_teacher_events: 1024
+  n_student_events: 768
+  n_student_reps: 2
 
 
 
