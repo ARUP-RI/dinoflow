@@ -22,3 +22,28 @@ class TubeEncoder(nn.Module):
 
         x = self.encoder(x)
         return x[:, 0, :] # Just the cls token
+
+
+class ProjectionHead(nn.Module):
+    def __init__(self, model_embed_dim, hidden_dim, projection_dim):
+        super().__init__()
+        self.projection = nn.Linear(model_embed_dim, hidden_dim)
+        self.gelu = nn.GELU()
+        self.projection2 = nn.Linear(hidden_dim, projection_dim)
+
+    def forward(self, x):
+        x = self.projection(x)
+        x = self.gelu(x)
+        x = self.projection2(x)
+        return x
+
+class TubeEncoderWithProjection(nn.Module):
+    def __init__(self, num_features, model_embed_dim, layers, heads, hidden_dim, projection_dim):
+        super().__init__()
+        self.tube_encoder = TubeEncoder(num_features, model_embed_dim, layers, heads)
+        self.projection_head = ProjectionHead(model_embed_dim, hidden_dim, projection_dim)
+
+    def forward(self, x):
+        x = self.tube_encoder(x)
+        x = self.projection_head(x)
+        return x
