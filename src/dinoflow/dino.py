@@ -142,12 +142,7 @@ def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_
             y_t = teacher(teacher_events.to(DEVICE).float())
             logger.debug("Computing loss")
             dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=1.0, t_temp=0.9)
-<<<<<<< HEAD
-            dino_loss_sum += dinoloss.item()
-            # koleo_loss = koleoloss(y_s)
-=======
             koleo_loss = koleoloss(y_s)
->>>>>>> 3bed3daadafaa8e7a3102c78f659a8107b0ea14d
             cos_sim_loss_val = cos_sim_loss(y_s, y_t)
             cs_loss_sum += cos_sim_loss_val.item()
             loss = dinoloss + koleo_loss_weight * koleo_loss
@@ -169,7 +164,7 @@ def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_
                 self_cos_sim, off_diag_cos_sim = teacher_student_cosine_similarity(y_s, y_t)
                 yt_self_loss_sum += self_cos_sim.item()
                 yt_other_loss_sum += off_diag_cos_sim.item()
-                logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} CS loss: {cos_sim_loss_val.item()  :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} off_diag_cos_sim: {off_diag_cos_sim.item() :.4f}")
+                logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} CS loss: {cos_sim_loss_val.item()  :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} o_d_cos_sim: {off_diag_cos_sim.item() :.4f} teacher mo: {param_mo :.4f}")
                 cos_sim_sum += cos_sim.mean().item()
 
         teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
