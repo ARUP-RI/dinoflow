@@ -9,7 +9,7 @@ class TubeEncoder(nn.Module):
     def __init__(self, num_features, model_embed_dim, layers, heads):
         super().__init__()
         self.fc = nn.Linear(num_features, model_embed_dim)
-        encoderlayer = nn.TransformerEncoderLayer(d_model=model_embed_dim, nhead=heads)
+        encoderlayer = nn.TransformerEncoderLayer(d_model=model_embed_dim, nhead=heads, batch_first=True, dropout=0)
         self.encoder = nn.TransformerEncoder(encoderlayer, num_layers=layers)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, model_embed_dim))
         nn.init.xavier_uniform_(self.cls_token)

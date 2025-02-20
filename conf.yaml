@@ -9,10 +9,12 @@ model:
   model_dim: 512
   layers: 8
   heads: 4
+  projection_dim: 256
+  hidden_dim: 256
 
 
 training:
-  batch_size: 200
+  batch_size: 128
   min_lr: 0.0000001
   max_lr: 0.0001
   warmup_iters: 5000
@@ -23,8 +25,12 @@ training:
   teacher_momentum_start: 0.9
   teacher_momentum_end: 0.99
   teacher_momentum_steps: 5000
+
+  teacher_events_start: 1024
+  teacher_events_end: 2048
+  teacher_events_steps: 50000
+
   koleo_loss_weight: 0.1
-  n_teacher_events: 1024
   n_student_events: 768
   n_student_reps: 2
 
