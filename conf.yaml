@@ -13,15 +13,17 @@ model:
 
 training:
   batch_size: 200
-  min_lr: 0.000001
-  max_lr: 0.00025
+  min_lr: 0.0000001
+  max_lr: 0.0001
   warmup_iters: 5000
   lr_decay_iters: 50000
   epochs: 100
   checkpoint_freq: 10
   center_momentum: 0.99
-  teacher_param_momentum: 0.999
-  koleo_loss_weight: 0.0
+  teacher_momentum_start: 0.9
+  teacher_momentum_end: 0.99
+  teacher_momentum_steps: 5000
+  koleo_loss_weight: 0.1
   n_teacher_events: 1024
   n_student_events: 768
   n_student_reps: 2
