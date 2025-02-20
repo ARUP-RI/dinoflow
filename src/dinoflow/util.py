@@ -93,9 +93,35 @@ class WarmupCosineLRScheduler(LRScheduler):
         return lr
 
 
+class LinearScheduler():
+
+    def __init__(self, start_value, end_value, num_steps):
+        self.start_value = start_value
+        self.end_value = end_value
+        self.num_steps = num_steps
+        self.current_step = 0
+
+    def current_value(self):
+        return self.value_for_step(self.current_step)
+
+    def step(self):
+        self.current_step += 1
+
+    def value_for_step(self, step):
+        if step > self.num_steps:
+            return self.end_value
+        return self.start_value + step * (self.end_value - self.start_value) / self.num_steps
+
+
 def munge_label_df(labelcsv):
     bertp = pd.read_csv(labelcsv, dtype={"accession": str})
     bertp['Any_BNHL'] = bertp[['10+BNHL', '5+BNHL', '5-10-BNHL', 'B-NHL', 'BALL']].any(axis=1)
     bertp['viability'].fillna(-1, inplace=True)
     bertp['diagnoses'] = bertp['diagnoses'].astype(str, copy=True)
     return bertp
+
+if __name__=="__main__":
+    scheduler = LinearScheduler(0.9, 1, 10)
+    for i in range(20):
+        print(scheduler.current_value())
+        scheduler.step()

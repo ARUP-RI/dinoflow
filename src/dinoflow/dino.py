@@ -26,7 +26,7 @@ from dinoflow import data
 from dinoflow.loss import KoLeoLoss, CosineSimLoss
 from dinoflow.data import scale, shift, shuffle, compose, noise, standardize_range, subsample_events, NoLabelTubes, subsample_batch
 
-from dinoflow.util import WarmupCosineLRScheduler, random_sample
+from dinoflow.util import WarmupCosineLRScheduler, random_sample, LinearScheduler
 
 app = typer.Typer(pretty_exceptions_show_locals=False)
 
@@ -38,7 +38,7 @@ logger = logging.getLogger("dinoflow")
 
 logging.basicConfig(format='[%(asctime)s] %(process)d  %(name)s  %(levelname)s  %(message)s',
                     datefmt='%m-%d %H:%M:%S',
-                    level=logging.INFO,
+                    level=logging.INFO if MASTER_PROCESS else logging.WARNING,
                     handlers=[
                         logging.StreamHandler(),  # Output logs to stdout
                     ])
@@ -109,7 +109,7 @@ def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_
     return teacher_events, all_student_events
 
 
-def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_events, n_student_reps, center_mo, param_mo, teacher_center, lr_schedule, koleo_loss_weight):
+def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_events, n_student_reps, center_mo, teacher_mo_schedule, teacher_center, lr_schedule, koleo_loss_weight):
     """
     Conduct a single DINO epoch
     For each batch, augment the data and pass to the student and send un-augmented data to the teacher, the loss
@@ -124,6 +124,7 @@ def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_
     cos_sim_sum = 0
     yt_self_loss_sum = 0
     yt_other_loss_sum = 0
+    dino_loss_sum = 0
     koleoloss = KoLeoLoss(device=DEVICE)
     cos_sim_loss = CosineSimLoss(device=DEVICE)
     cs_loss_sum = 0
@@ -137,6 +138,7 @@ def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_
             y_t = teacher(teacher_events.to(DEVICE).float())
 
             dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=1.0, t_temp=0.9)
+            dino_loss_sum += dinoloss.item()
             # koleo_loss = koleoloss(y_s)
             cos_sim_loss_val = cos_sim_loss(y_s, y_t)
             cs_loss_sum += cos_sim_loss_val.item()
@@ -149,6 +151,8 @@ def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_
         if lr_schedule:
             lr_schedule.step()
 
+        teacher_mo_schedule.step()
+        param_mo = teacher_mo_schedule.current_value()
         # Update centering and teacher weights
         with torch.no_grad():
             cos_sim = cosine_similarity_matrix(y_t)
@@ -174,7 +178,8 @@ def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_
         "cosine_sim": cos_sim_sum / len(loader),
         "yt_self_loss": yt_self_loss_sum / len(loader),
         "yt_other_loss": yt_other_loss_sum / len(loader),
-        "cs_loss": cs_loss_sum / len(loader)
+        "cs_loss": cs_loss_sum / len(loader),
+        "dino_loss": dino_loss_sum / len(loader)
     }
 
 
@@ -258,8 +263,6 @@ def train_dino(conf, run_name):
     for p in teacher.parameters():
         p.requires_grad = False
 
-
-
     if device_id is not None:
         student = DDP(student.to(device_id), device_ids=[device_id])
         if not conf.get('checkpoint'):
@@ -298,19 +301,10 @@ def train_dino(conf, run_name):
         feat_stds = torch.tensor(conf['normalization_params']['b_feat_stds'])
     else:
         raise ValueError("Unknown tube type")
-
-    # student_augs = compose([
-    #     partial(data.subsample_batch, num_events=conf['data']['input_events']),
-    #     partial(data.standardize_range, means=feat_means, stds=feat_stds)
-    # ])
-
-    # teacher_augs = compose([
-    #     partial(data.subsample_batch, num_events=conf['data']['input_events']),
-    #     partial(data.standardize_range, means=feat_means, stds=feat_stds)
-    # ])
-
     
     checkpoint_freq = conf['training']['checkpoint_freq']
+
+    teacher_mo_schedule = LinearScheduler(conf['training']['teacher_momentum_start'], conf['training']['teacher_momentum_end'], conf['training']['teacher_momentum_steps'])
 
     #logger.info(f"Proc: {os.getpid()} device: {device_id} w: {student.module.backbone.embedding[0].weight[0, :]}")
     for epoch in range(start_epoch, start_epoch + conf['training']['epochs']):
@@ -320,7 +314,7 @@ def train_dino(conf, run_name):
                    n_student_events=conf['training']['n_student_events'],
                    n_student_reps=conf['training']['n_student_reps'],
                    center_mo=conf['training']['center_momentum'],
-                   param_mo=conf['training']['teacher_param_momentum'],
+                   teacher_mo_schedule=teacher_mo_schedule,
                    teacher_center=teacher_center,
                    lr_schedule=lrschedule,
                    koleo_loss_weight=conf['training']['koleo_loss_weight'],
@@ -337,7 +331,7 @@ def train_dino(conf, run_name):
             experiment.log_metric("lr", lrschedule.get_lr()[0], epoch=epoch)
             experiment.log_metric("ts_self_loss", ts_self_loss, epoch=epoch)
             experiment.log_metric("ts_other_loss", ts_other_loss, epoch=epoch)
-
+            experiment.log_metric("dino_loss", epoch_results['dino_loss'], epoch=epoch)
         if (epoch % checkpoint_freq == 0 or epoch == (conf['training']['epochs'] - 1)) and MASTER_PROCESS:
             if isinstance(student, DDP):
                 student_unwrapped = student.module

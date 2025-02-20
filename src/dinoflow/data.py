@@ -379,7 +379,7 @@ class NoLabelTubes(Dataset):
     
     def __getitem__(self, i):
         try:
-            item = torch.load(self.samples[i])
+            item = torch.load(self.samples[i], weights_only=True)
             if item[self.return_key].shape[0] > self.min_events:
                 idx = torch.randperm(item[self.return_key].shape[0])[0:self.min_events]
                 return item[self.return_key][idx]
