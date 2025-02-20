@@ -21,7 +21,7 @@ import numpy as np
 import logging
 
 
-from dinoflow.models import TubeEncoder
+from dinoflow.models import TubeEncoder, TubeEncoderWithProjection
 from dinoflow import data
 from dinoflow.loss import KoLeoLoss, CosineSimLoss
 from dinoflow.data import scale, shift, shuffle, compose, noise, standardize_range, subsample_events, NoLabelTubes, subsample_batch
@@ -244,7 +244,7 @@ def train_dino(conf, run_name):
     loader = DataLoader(tubes, batch_size=conf['training']['batch_size'], shuffle=True, pin_memory=True, num_workers=4, collate_fn=data.collate_fn)
 
     # Initialize here, but may be overwritten by checkpoint
-    teacher_center = torch.zeros(conf['model']['model_dim']).to(DEVICE)
+    teacher_center = torch.zeros(conf['model']['projection_dim']).to(DEVICE)
     start_epoch = 0
 
     # Load from checkpoint if present
@@ -264,8 +264,8 @@ def train_dino(conf, run_name):
         if ckpt.get('teacher_center') is not None:
             teacher_center = ckpt['teacher_center']
     else:
-        student = TubeEncoder(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads']).to(DEVICE)
-        teacher = TubeEncoder(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads']).to(DEVICE)
+        student = TubeEncoderWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
+        teacher = TubeEncoderWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
         optimizer = torch.optim.AdamW(student.parameters(), lr=conf['training']['min_lr'])
 
     for p in teacher.parameters():
