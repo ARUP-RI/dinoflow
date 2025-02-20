@@ -111,7 +111,7 @@ def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_
     return teacher_events, all_student_events
 
 
-def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_events, n_student_reps, center_mo, teacher_mo_schedule, teacher_center, lr_schedule, koleo_loss_weight):
+def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_student_events, n_student_reps, center_mo, teacher_mo_schedule, teacher_center, lr_schedule, koleo_loss_weight):
     """
     Conduct a single DINO epoch
     For each batch, augment the data and pass to the student and send un-augmented data to the teacher, the loss
@@ -130,6 +130,7 @@ def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_
     cos_sim_loss = CosineSimLoss(device=DEVICE)
     cs_loss_sum = 0
     for i, batch in enumerate(loader):
+        n_teacher_events = int(teacher_events_schedule.current_value())
         optimizer.zero_grad()
         logger.debug("Generating teacher and student samples")
         teacher_events, student_events = student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_reps)
@@ -155,16 +156,17 @@ def dino_epoch(loader, teacher, student, optimizer, n_teacher_events, n_student_
         if lr_schedule:
             lr_schedule.step()
 
+        teacher_events_schedule.step()
         teacher_mo_schedule.step()
         param_mo = teacher_mo_schedule.current_value()
         # Update centering and teacher weights
         if i%10 == 0:
             with torch.no_grad():
                 cos_sim = cosine_similarity_matrix(y_t)
-                self_cos_sim, off_diag_cos_sim = teacher_student_cosine_similarity(y_s, y_t)
+                self_cos_sim, off_diag_cos_sim = teacher_student_cosine_similarity(y_s, y_t, emit=True)
                 yt_self_loss_sum += self_cos_sim.item()
                 yt_other_loss_sum += off_diag_cos_sim.item()
-                logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} CS loss: {cos_sim_loss_val.item()  :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} o_d_cos_sim: {off_diag_cos_sim.item() :.4f} teacher mo: {param_mo :.4f}")
+                logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} CS loss: {cos_sim_loss_val.item()  :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} o_d_cos_sim: {off_diag_cos_sim.item() :.4f} teacher mo: {param_mo :.4f} teacher events: {n_teacher_events}")
                 cos_sim_sum += cos_sim.mean().item()
 
         teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
@@ -312,11 +314,13 @@ def train_dino(conf, run_name):
 
     teacher_mo_schedule = LinearScheduler(conf['training']['teacher_momentum_start'], conf['training']['teacher_momentum_end'], conf['training']['teacher_momentum_steps'])
 
+    teacher_events_schedule = LinearScheduler(conf['training']['teacher_events_start'], conf['training']['teacher_events_end'], conf['training']['teacher_events_steps'])
+
     #logger.info(f"Proc: {os.getpid()} device: {device_id} w: {student.module.backbone.embedding[0].weight[0, :]}")
     for epoch in range(start_epoch, start_epoch + conf['training']['epochs']):
 
         epoch_results = dino_epoch(loader, teacher, student, optimizer,
-                   n_teacher_events=conf['training']['n_teacher_events'],
+                   teacher_events_schedule=teacher_events_schedule,
                    n_student_events=conf['training']['n_student_events'],
                    n_student_reps=conf['training']['n_student_reps'],
                    center_mo=conf['training']['center_momentum'],
