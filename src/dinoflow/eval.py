@@ -69,7 +69,7 @@ def main(train_labels, test_labels, checkpointpath):
     classifier = ClassificationHead(model.num_features, 2)
     optimizer = torch.optim.Adam(classifier.parameters(), lr=0.001)
     # Load the data
-    traindata = TubeData(train_labels))
+    traindata = TubeData(train_labels)
     trainloader = DataLoader(traindata, batch_size=128, shuffle=True)
 
 
