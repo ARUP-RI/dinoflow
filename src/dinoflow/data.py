@@ -317,6 +317,9 @@ class TubeData(Dataset):
                 tubes[tube] = subsample_events(tubedata[tube], self.events_to_return)
             else:
                 tubes[tube] = tubedata[tube]
+        
+        if len(tubes) == 1:
+            tubes = tubes[self.tubes_to_return[0]]
             
         return tubes, row['label']
 

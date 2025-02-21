@@ -50,7 +50,7 @@ def train_classifier(backbone, classifier, dataloader, optimizer, epochs, tube='
     """
     criterion = nn.CrossEntropyLoss()
     for epoch in range(epochs):
-        for i, batch in enumerate(dataloader):
+        for i, (batch, labels) in enumerate(dataloader):
             print(f"Batch: {batch}")
             optimizer.zero_grad()
             batch = torch.stack(batch[tube])
@@ -63,7 +63,7 @@ def train_classifier(backbone, classifier, dataloader, optimizer, epochs, tube='
             optimizer.step()
 
 @app.command()
-def train(train_labels, test_labels, checkpoint) :
+def train(train_labels, test_labels, checkpoint, events=4096) :
     """
     Evaluate the model on the test set
     """
@@ -74,12 +74,12 @@ def train(train_labels, test_labels, checkpoint) :
     classifier = ClassificationHead(model.cls_token.shape[-1], 2)
     optimizer = torch.optim.Adam(classifier.parameters(), lr=0.001)
 
-    traindata = TubeData(train_labels, tubes_to_return=["m"])
-    trainloader = DataLoader(traindata, batch_size=128, shuffle=True, collate_fn=collate_fn)
+    traindata = TubeData(train_labels, tubes_to_return=["m"], events_to_return=events)
+    trainloader = DataLoader(traindata, batch_size=128, shuffle=True)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
 
-    valdata = TubeData(test_labels, tubes_to_return=["m"])
-    valloader = DataLoader(valdata, batch_size=128, shuffle=False, collate_fn=collate_fn)
+    valdata = TubeData(test_labels, tubes_to_return=["m"], events_to_return=events)
+    valloader = DataLoader(valdata, batch_size=128, shuffle=False)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
 
     train_classifier(model, classifier, trainloader, optimizer, 10, tube='m')
