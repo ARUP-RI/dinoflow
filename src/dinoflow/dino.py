@@ -267,8 +267,6 @@ def train_dino(conf, run_name):
         student = TubeEncoderWithProjection(num_features=modelconf['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
         teacher = TubeEncoderWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
 
-        student = TubeEncoder(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads']).to(DEVICE)
-        teacher = TubeEncoder(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads']).to(DEVICE)
         conf['model'] = modelconf
         start_epoch = conf.get("epoch", 0)
         optimizer = torch.optim.AdamW(student.parameters(), lr=conf['training']['min_lr'])
