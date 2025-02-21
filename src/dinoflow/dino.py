@@ -166,8 +166,8 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
 
                 # We are interested in how similar two sets of events sampled from the same tube are compared to two sets of events from different tubes, when 
                 # run through the teacher model. 
-                s_events = student_events[0:batch.shape[0], :, :]
-                t_events = teacher_events[0:batch.shape[0], :, :]
+                s_events = student_events[0:len(batch), :, :]
+                t_events = teacher_events[0:len(batch), :, :]
                 y0 = teacher(s_events.to(DEVICE).float())
                 y1 = teacher(t_events.to(DEVICE).float())
                 self_cos_sim, other_cosim = teacher_student_cosine_similarity(y0, y1, emit=MASTER_PROCESS)
@@ -341,7 +341,7 @@ def train_dino(conf, run_name):
                    )
         teacher_center = epoch_results['teacher_center']
         cosine_sim = epoch_results['cosine_sim']
-        logger.info(f"Epoch #{epoch} LR: {lrschedule.get_lr()[0] :.5f} Loss: {loss :.4f}  cos. sim: {cosine_sim :.4f} yt_self_loss: {ts_self_loss :.4f} yt_other_loss: {ts_other_loss :.4f}")
+        logger.info(f"Epoch #{epoch} LR: {lrschedule.get_lr()[0] :.5f} Loss: {epoch_results['loss'] :.4f}  cos. sim: {epoch_results['cosine_sim'] :.4f} self_cosim_mean: {epoch_results['self_cosim_mean'] :.4f} other_cosim_mean: {other_cosim_mean :.4f}")
         if experiment is not None:
             experiment.log_metric("loss", epoch_results['loss'], epoch=epoch)
             experiment.log_metric("cosine_sim", cosine_sim, epoch=epoch)
