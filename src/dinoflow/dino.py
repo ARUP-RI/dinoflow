@@ -35,6 +35,7 @@ DEVICE = None # This is set in the 'train' method
 
 
 logger = logging.getLogger("dinoflow")
+experiment = None
 
 logging.basicConfig(format='[%(asctime)s] %(process)d  %(name)s  %(levelname)s  %(message)s',
                     datefmt='%m-%d %H:%M:%S',
@@ -48,11 +49,6 @@ np.set_printoptions(precision=4, suppress=True, linewidth=160)
 if MASTER_PROCESS:
     from comet_ml import Experiment
 
-    experiment = Experiment(
-      api_key=os.getenv('COMET_API_KEY'),
-      project_name="dinoflow",
-      workspace="brendan"
-    )
 else:
     experiment = None
 
@@ -79,6 +75,7 @@ def teacher_student_cosine_similarity(ys, yt, emit=False):
     if emit:
         print(str(S[0:10, 0:10].cpu().numpy()) + "\n")
 
+    S = S * S
     # On-diagonal elements represent the same sample processed through the teacher and student, so they should have high similarity
     # off diagonal elements represent different samples processed through the teacher and student, so they should have low similarity
     on_diagonal_mean = S.diagonal().mean()
@@ -99,7 +96,7 @@ def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_
     Sample n_teacher_events for each member of the batch, then from those events repeatedly sample n_student_events
     n_student_reps times 
     """
-    assert n_student_events < n_teacher_events
+    assert n_student_events <= n_teacher_events
     teacher_events = subsample_batch(batch, n_teacher_events)
     all_student_events = []
     for i in range(n_student_reps):
@@ -278,6 +275,7 @@ def train_dino(conf, run_name):
     else:
         student = TubeEncoderWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
         teacher = TubeEncoderWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
+
         optimizer = torch.optim.AdamW(student.parameters(), lr=conf['training']['min_lr'])
 
     for p in teacher.parameters():
@@ -377,6 +375,14 @@ def train_dino(conf, run_name):
             torch.save(ckpt, dest)
 
 
+def init_comet_expr():
+    global experiment
+    experiment = Experiment(
+      api_key=os.getenv('COMET_API_KEY'),
+      project_name="dinoflow",
+      workspace="brendan"
+    )
+
 @app.command()
 def train(config, tube_type: str = None, run_name=None, checkpoint: str = None):
     logger.info(f"Loading config from {config}")
@@ -394,9 +400,9 @@ def train(config, tube_type: str = None, run_name=None, checkpoint: str = None):
     result_dir = result_root_dir / run_name
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    if experiment is not None:
-        if run_name is not None:
-            experiment.set_name(run_name)
+    if MASTER_PROCESS and run_name is not None:
+        init_comet_expr()
+        experiment.set_name(run_name)
         experiment.log_parameters(conf)
 
     os.chdir(result_dir)
