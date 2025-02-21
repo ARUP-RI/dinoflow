@@ -129,6 +129,7 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
     koleoloss = KoLeoLoss(device=DEVICE)
     cos_sim_loss = CosineSimLoss(device=DEVICE)
     cs_loss_sum = 0
+    koleo_loss_sum = 0
     for i, batch in enumerate(loader):
         n_teacher_events = int(teacher_events_schedule.current_value())
         optimizer.zero_grad()
@@ -147,6 +148,7 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
             cos_sim_loss_val = cos_sim_loss(y_s, y_t)
             cs_loss_sum += cos_sim_loss_val.item()
             loss = dinoloss + koleo_loss_weight * koleo_loss
+            koleo_loss_sum += koleo_loss.item()
             epoch_loss_sum += loss.item()
 
         logger.debug("Backprop")
@@ -163,11 +165,20 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
         if i%10 == 0:
             with torch.no_grad():
                 cos_sim = cosine_similarity_matrix(y_t)
-                self_cos_sim, off_diag_cos_sim = teacher_student_cosine_similarity(y_s, y_t, emit=True)
-                yt_self_loss_sum += self_cos_sim.item()
-                yt_other_loss_sum += off_diag_cos_sim.item()
-                logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} CS loss: {cos_sim_loss_val.item()  :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cos_sim: {self_cos_sim.item() :.4f} o_d_cos_sim: {off_diag_cos_sim.item() :.4f} teacher mo: {param_mo :.4f} teacher events: {n_teacher_events}")
                 cos_sim_sum += cos_sim.mean().item()
+
+                # We are interested in how similar two sets of events sampled from the same tube are compared to two sets of events from different tubes, when 
+                # run through the teacher model. 
+                s_events = student_events[0:batch.shape[0], :, :]
+                t_events = teacher_events[0:batch.shape[0], :, :]
+                y0 = teacher(s_events.to(DEVICE).float())
+                y1 = teacher(t_events.to(DEVICE).float())
+                self_cos_sim, other_cosim = teacher_student_cosine_similarity(y0, y1, emit=MASTER_PROCESS)
+                yt_self_loss_sum += self_cos_sim.item()
+                yt_other_loss_sum += other_cosim.item()
+
+                logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} CS loss: {cos_sim_loss_val.item()  :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cosim: {self_cos_sim.item() :.4f} other_cosim: {other_cosim.item() :.4f} teacher mo: {param_mo :.4f} teacher events: {n_teacher_events}")
+                
 
         teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
         dist_tot = 0
@@ -183,9 +194,10 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
     return {
         "teacher_center": teacher_center,
         "epoch_loss": epoch_loss,
+        "koleo_loss": koleo_loss_sum / len(loader),
         "cosine_sim": cos_sim_sum / len(loader),
-        "yt_self_loss": yt_self_loss_sum / len(loader),
-        "yt_other_loss": yt_other_loss_sum / len(loader),
+        "self_cosim_mean": yt_self_loss_sum / len(loader),
+        "other_cosim_mean": yt_other_loss_sum / len(loader),
         "cs_loss": cs_loss_sum / len(loader),
         "dino_loss": dino_loss_sum / len(loader)
     }
@@ -330,18 +342,19 @@ def train_dino(conf, run_name):
                    koleo_loss_weight=conf['training']['koleo_loss_weight'],
                    )
         teacher_center = epoch_results['teacher_center']
-        loss = epoch_results['epoch_loss']
         cosine_sim = epoch_results['cosine_sim']
-        ts_self_loss = epoch_results['yt_self_loss']
-        ts_other_loss = epoch_results['yt_other_loss']
         logger.info(f"Epoch #{epoch} LR: {lrschedule.get_lr()[0] :.5f} Loss: {loss :.4f}  cos. sim: {cosine_sim :.4f} yt_self_loss: {ts_self_loss :.4f} yt_other_loss: {ts_other_loss :.4f}")
         if experiment is not None:
-            experiment.log_metric("loss", loss, epoch=epoch)
+            experiment.log_metric("loss", epoch_results['loss'], epoch=epoch)
             experiment.log_metric("cosine_sim", cosine_sim, epoch=epoch)
             experiment.log_metric("lr", lrschedule.get_lr()[0], epoch=epoch)
-            experiment.log_metric("ts_self_loss", ts_self_loss, epoch=epoch)
-            experiment.log_metric("ts_other_loss", ts_other_loss, epoch=epoch)
+            experiment.log_metric("self_cosim_mean", epoch_results['self_cosim_mean'], epoch=epoch)
+            experiment.log_metric("other_cosim_mean", epoch_results['other_cosim_mean'], epoch=epoch)
             experiment.log_metric("dino_loss", epoch_results['dino_loss'], epoch=epoch)
+            experiment.log_metric("koleo_loss", epoch_results['koleo_loss'], epoch=epoch)
+            experiment.log_metric("teacher_mo", teacher_mo_schedule.current_value(), epoch=epoch)
+            experiment.log_metric("teacher_events_schedule", teacher_events_schedule.current_value(), epoch=epoch)
+
         if (epoch % checkpoint_freq == 0 or epoch == (conf['training']['epochs'] - 1)) and MASTER_PROCESS:
             if isinstance(student, DDP):
                 student_unwrapped = student.module

@@ -16,14 +16,14 @@ model:
 training:
   batch_size: 128
   min_lr: 0.0000001
-  max_lr: 0.0001
+  max_lr: 0.00002
   warmup_iters: 5000
   lr_decay_iters: 50000
   epochs: 100
   checkpoint_freq: 10
   center_momentum: 0.99
-  teacher_momentum_start: 0.9
-  teacher_momentum_end: 0.99
+  teacher_momentum_start: 0.95
+  teacher_momentum_end: 0.999
   teacher_momentum_steps: 5000
 
   teacher_events_start: 1024
