@@ -166,8 +166,8 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
 
                 # We are interested in how similar two sets of events sampled from the same tube are compared to two sets of events from different tubes, when 
                 # run through the teacher model. 
-                s_events = student_events[0:batch.shape[0], :, :]
-                t_events = teacher_events[0:batch.shape[0], :, :]
+                s_events = student_events[0:len(batch), :, :]
+                t_events = teacher_events[0:len(batch), :, :]
                 y0 = teacher(s_events.to(DEVICE).float())
                 y1 = teacher(t_events.to(DEVICE).float())
                 self_cos_sim, other_cosim = teacher_student_cosine_similarity(y0, y1, emit=MASTER_PROCESS)
@@ -262,8 +262,9 @@ def train_dino(conf, run_name):
         ckpt = torch.load(conf['checkpoint'], weights_only=False, map_location=DEVICE)
         logger.info(f"Found model configuration: {ckpt['modelconf']}")
         modelconf = ckpt['modelconf']
-        student = TubeEncoder(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads']).to(DEVICE)
-        teacher = TubeEncoder(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads']).to(DEVICE)
+        student = TubeEncoderWithProjection(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads'], hidden_dim=modelconf['hidden_dim'], projection_dim=modelconf['projection_dim']).to(DEVICE)
+        teacher = TubeEncoderWithProjection(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads'], hidden_dim=modelconf['hidden_dim'], projection_dim=modelconf['projection_dim']).to(DEVICE)
+
         conf['model'] = modelconf
         start_epoch = conf.get("epoch", 0)
         optimizer = torch.optim.AdamW(student.parameters(), lr=conf['training']['min_lr'])
