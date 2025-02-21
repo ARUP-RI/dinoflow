@@ -297,8 +297,26 @@ class NoLabelTubes(Dataset):
         
 
 
+class TubeData(Dataset):
+
+    def __init__(self, labelcsv, data_root="/", tubes_to_return=["b", "t", "m"]):
+        self.data = pd.read_csv(labelcsv)
+        self.tubes_to_return = tubes_to_return
+        self.dataroot = Path(data_root)
+
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, i):
+        row = self.data.iloc[i]
+        tubes = {}
+        for tube in self.tubes_to_return:
+            tubes[tube] = torch.load(self.dataroot / row['path'], weights_only=True)
+        return tubes, row['label']
+
+
 def collate_fn(items):
     """
-    This dataset returns a list of tensors which may have different sizes, so we can't stack them
+    The NoLabelTubes dataset returns a list of tensors which may have different sizes, so we can't stack them
     """
     return items

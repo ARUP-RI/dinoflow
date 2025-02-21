@@ -1,5 +1,5 @@
 import csv
-from sys
+import sys
 from pathlib import Path
 
 def main(csvpath, datadir):
@@ -14,10 +14,11 @@ def main(csvpath, datadir):
 
     with open(csvpath, 'r') as f:
         reader = csv.DictReader(f)
+        print("accession,path,normal,label")
         for row in reader:
             acc = row['accession']
             if acc in tubemap:
-                print(f"{acc} {tubemap[acc]}")
+                print(f"{acc},{tubemap[acc]},{row['NORMAL']},{row['AML']}")
             else:
                 print(f"{acc} NOT FOUND")
 
