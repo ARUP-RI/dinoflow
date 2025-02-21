@@ -50,7 +50,8 @@ def train_classifier(backbone, classifier, dataloader, optimizer, epochs, tube='
     """
     criterion = nn.CrossEntropyLoss()
     for epoch in range(epochs):
-        for i, (labels, batch) in enumerate(dataloader):
+        for i, batch in enumerate(dataloader):
+            print(f"Batch: {batch}")
             optimizer.zero_grad()
             batch = torch.stack(batch[tube])
             representations = backbone(batch)
@@ -61,8 +62,8 @@ def train_classifier(backbone, classifier, dataloader, optimizer, epochs, tube='
             loss.backward()
             optimizer.step()
 
-
-def main(train_labels, test_labels, checkpoint) :
+@app.command()
+def train(train_labels, test_labels, checkpoint) :
     """
     Evaluate the model on the test set
     """
@@ -70,7 +71,7 @@ def main(train_labels, test_labels, checkpoint) :
     for p in model.parameters():
         p.requires_grad = False
 
-    classifier = ClassificationHead(model.num_features, 2)
+    classifier = ClassificationHead(model.cls_token.shape[-1], 2)
     optimizer = torch.optim.Adam(classifier.parameters(), lr=0.001)
 
     traindata = TubeData(train_labels, tubes_to_return=["m"])
