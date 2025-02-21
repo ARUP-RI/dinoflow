@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
+from sklearn.metrics import precision_recall_fscore_support
+
 from dinoflow.models import TubeEncoderWithProjection
 from dinoflow.data import TubeData, collate_fn
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -43,7 +45,7 @@ def load_checkpoint(path):
     return teacher.tube_encoder
 
 
-def train_classifier(backbone, classifier, dataloader, optimizer, epochs, tube='m'):
+def train_classifier(backbone, classifier, dataloader, optimizer, val_loader, epochs, tube='m'):
     """
     Train a classifier on the data
     """
@@ -60,6 +62,22 @@ def train_classifier(backbone, classifier, dataloader, optimizer, epochs, tube='
             
             loss.backward()
             optimizer.step()
+        
+        with torch.no_grad():
+            allpreds = []
+            alllabels = []
+            threshold = 0.5
+            for i, (batch, labels) in enumerate(val_loader):
+                representations = backbone(batch.to(DEVICE).float())
+                preds = classifier(representations)
+                allpreds.append(preds)
+                alllabels.append(labels)
+            allpreds = torch.cat(allpreds).cpu().numpy()
+            alllabels = torch.cat(alllabels).cpu().numpy()
+            precision, recall, fscore, support = precision_recall_fscore_support(alllabels, allpreds > threshold, average='binary')
+            logger.info(f"Epoch {epoch} Precision {precision:.4f} Recall {recall:.4f} F-score {fscore:.4f}")
+            
+            
 
 @app.command()
 def train(train_labels, test_labels, checkpoint, events: int = 4096) :
