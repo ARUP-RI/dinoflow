@@ -22,16 +22,16 @@ training:
   epochs: 100
   checkpoint_freq: 10
   center_momentum: 0.99
-  teacher_momentum_start: 0.95
+  teacher_momentum_start: 0.99
   teacher_momentum_end: 0.999
   teacher_momentum_steps: 5000
 
-  teacher_events_start: 1024
-  teacher_events_end: 2048
+  teacher_events_start: 4096
+  teacher_events_end: 4096
   teacher_events_steps: 50000
 
-  koleo_loss_weight: 0.1
-  n_student_events: 768
+  koleo_loss_weight: 0.025
+  n_student_events: 1024
   n_student_reps: 2
 
 
