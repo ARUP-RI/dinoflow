@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from dinoflow.models import TubeEncoderWithProjection
-from dinoflow.data import TubeData
+from dinoflow.data import TubeData, collate_fn
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 app = typer.Typer(pretty_exceptions_show_locals=False)
@@ -44,7 +44,7 @@ def load_checkpoint(path):
 
 
 @torch.inference_mode()
-def train_classifier(backbone, classifier, dataloader, optimizer, epochs):
+def train_classifier(backbone, classifier, dataloader, optimizer, epochs, tube='m'):
     """
     Train a classifier on the data
     """
@@ -52,6 +52,7 @@ def train_classifier(backbone, classifier, dataloader, optimizer, epochs):
     for epoch in range(epochs):
         for i, (labels, batch) in enumerate(dataloader):
             optimizer.zero_grad()
+            batch = torch.stack(batch[tube])
             representations = backbone(batch)
             preds = classifier(representations)
             loss = criterion(preds, labels)
@@ -61,22 +62,26 @@ def train_classifier(backbone, classifier, dataloader, optimizer, epochs):
             optimizer.step()
 
 
-def main(train_labels, test_labels, checkpointpath):
+def main(train_labels, test_labels, checkpoint) :
     """
     Evaluate the model on the test set
     """
-    model = load_checkpoint(checkpointpath)
+    model = load_checkpoint(checkpoint)
+    for p in model.parameters():
+        p.requires_grad = False
+
     classifier = ClassificationHead(model.num_features, 2)
     optimizer = torch.optim.Adam(classifier.parameters(), lr=0.001)
-    # Load the data
-    traindata = TubeData(train_labels)
-    trainloader = DataLoader(traindata, batch_size=128, shuffle=True)
 
+    traindata = TubeData(train_labels, tubes_to_return=["m"])
+    trainloader = DataLoader(traindata, batch_size=128, shuffle=True, collate_fn=collate_fn)
+    logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
 
-    valdata = TubeData(test_labels)
-    valloader = DataLoader(valdata, batch_size=128, shuffle=False)
-    
-    train_classifier(model, classifier, trainloader, optimizer, 10)
+    valdata = TubeData(test_labels, tubes_to_return=["m"])
+    valloader = DataLoader(valdata, batch_size=128, shuffle=False, collate_fn=collate_fn)
+    logger.info(f"Loaded {len(valloader.dataset)} samples for val")
+
+    train_classifier(model, classifier, trainloader, optimizer, 10, tube='m')
 
 
 if __name__ == "__main__":

@@ -299,10 +299,11 @@ class NoLabelTubes(Dataset):
 
 class TubeData(Dataset):
 
-    def __init__(self, labelcsv, data_root="/", tubes_to_return=["b", "t", "m"]):
+    def __init__(self, labelcsv, events_to_return=-1, data_root="/", tubes_to_return=["b", "t", "m"]):
         self.data = pd.read_csv(labelcsv)
         self.tubes_to_return = tubes_to_return
         self.dataroot = Path(data_root)
+        self.events_to_return = events_to_return
 
     def __len__(self):
         return len(self.data)
@@ -311,7 +312,12 @@ class TubeData(Dataset):
         row = self.data.iloc[i]
         tubes = {}
         for tube in self.tubes_to_return:
-            tubes[tube] = torch.load(self.dataroot / row['path'], weights_only=True)
+            tubedata = torch.load(self.dataroot / row['path'], weights_only=True)
+            if self.events_to_return != -1:
+                tubes[tube] = subsample_events(tubedata[tube], self.events_to_return)
+            else:
+                tubes[tube] = tubedata[tube]
+            
         return tubes, row['label']
 
 
