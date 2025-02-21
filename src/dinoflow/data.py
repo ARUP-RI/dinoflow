@@ -320,8 +320,15 @@ class TubeData(Dataset):
         
         if len(tubes) == 1:
             tubes = tubes[self.tubes_to_return[0]]
-            
-        return tubes, row['label']
+         
+        # For now....
+        label = row['label']
+        if label:
+            label = 1.0
+        else:
+            label = 0.0
+
+        return tubes, label
 
 
 def collate_fn(items):

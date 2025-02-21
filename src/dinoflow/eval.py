@@ -24,7 +24,7 @@ class ClassificationHead(nn.Module):
             nn.Linear(num_features, num_features),
             nn.GELU(),
             nn.Linear(num_features, num_classes),
-            nn.Softmax(dim=1)
+            nn.Sigmoid()
         )
 
     def forward(self, x):
@@ -43,18 +43,19 @@ def load_checkpoint(path):
     return teacher.tube_encoder
 
 
-@torch.inference_mode()
 def train_classifier(backbone, classifier, dataloader, optimizer, epochs, tube='m'):
     """
     Train a classifier on the data
     """
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.BCELoss()
+    backbone.eval()
+    classifier.train()
     for epoch in range(epochs):
         for i, (batch, labels) in enumerate(dataloader):
             optimizer.zero_grad()
             representations = backbone(batch.to(DEVICE).float())
             preds = classifier(representations)
-            loss = criterion(preds, labels)
+            loss = criterion(preds, labels.to(DEVICE).float().unsqueeze(1))
             logger.info(f"Epoch {epoch} Batch {i} Loss {loss.item() :.4f}")
             
             loss.backward()
@@ -69,7 +70,7 @@ def train(train_labels, test_labels, checkpoint, events: int = 4096) :
     for p in model.parameters():
         p.requires_grad = False
 
-    classifier = ClassificationHead(model.cls_token.shape[-1], 2).to(DEVICE)
+    classifier = ClassificationHead(model.cls_token.shape[-1], 1).to(DEVICE)
     optimizer = torch.optim.Adam(classifier.parameters(), lr=0.001)
 
     traindata = TubeData(train_labels, tubes_to_return=["m"], events_to_return=int(events))
