@@ -127,6 +127,7 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
     cos_sim_loss = CosineSimLoss(device=DEVICE)
     cs_loss_sum = 0
     koleo_loss_sum = 0
+    report_freq = 10
     for i, batch in enumerate(loader):
         n_teacher_events = int(teacher_events_schedule.current_value())
         optimizer.zero_grad()
@@ -147,6 +148,7 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
             loss = dinoloss + koleo_loss_weight * koleo_loss
             koleo_loss_sum += koleo_loss.item()
             epoch_loss_sum += loss.item()
+            dino_loss_sum += dinoloss.item()
 
         logger.debug("Backprop")
         scaler.scale(loss).backward()
@@ -159,7 +161,7 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
         teacher_mo_schedule.step()
         param_mo = teacher_mo_schedule.current_value()
         # Update centering and teacher weights
-        if i%10 == 0:
+        if i % report_freq == 0:
             with torch.no_grad():
                 cos_sim = cosine_similarity_matrix(y_t)
                 cos_sim_sum += cos_sim.mean().item()
@@ -193,8 +195,8 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
         "epoch_loss": epoch_loss,
         "koleo_loss": koleo_loss_sum / len(loader),
         "cosine_sim": cos_sim_sum / len(loader),
-        "self_cosim_mean": yt_self_loss_sum / len(loader),
-        "other_cosim_mean": yt_other_loss_sum / len(loader),
+        "self_cosim_mean": report_freq * yt_self_loss_sum / len(loader),
+        "other_cosim_mean": report_freq * yt_other_loss_sum / len(loader),
         "cs_loss": cs_loss_sum / len(loader),
         "dino_loss": dino_loss_sum / len(loader)
     }
@@ -342,10 +344,10 @@ def train_dino(conf, run_name):
                    )
         teacher_center = epoch_results['teacher_center']
         cosine_sim = epoch_results['cosine_sim']
-        logger.info(f"Epoch #{epoch} LR: {lrschedule.get_lr()[0] :.5f} Loss: {loss :.4f}  cos. sim: {cosine_sim :.4f} yt_self_loss: {ts_self_loss :.4f} yt_other_loss: {ts_other_loss :.4f}")
+        logger.info(f"Epoch #{epoch} LR: {lrschedule.get_lr()[0] :.5f} Loss: {epoch_results['epoch_loss'] :.4f}  cos. sim: {epoch_results['cosine_sim'] :.4f} self_cosim_mean: {epoch_results['self_cosim_mean'] :.4f} other_cosim_mean: {epoch_results['other_cosim_mean'] :.4f}")
         if experiment is not None:
-            experiment.log_metric("loss", epoch_results['loss'], epoch=epoch)
-            experiment.log_metric("cosine_sim", cosine_sim, epoch=epoch)
+            experiment.log_metric("loss", epoch_results['epoch_loss'], epoch=epoch)
+            experiment.log_metric("cosine_sim", epoch_results['cosine_sim'], epoch=epoch)
             experiment.log_metric("lr", lrschedule.get_lr()[0], epoch=epoch)
             experiment.log_metric("self_cosim_mean", epoch_results['self_cosim_mean'], epoch=epoch)
             experiment.log_metric("other_cosim_mean", epoch_results['other_cosim_mean'], epoch=epoch)
