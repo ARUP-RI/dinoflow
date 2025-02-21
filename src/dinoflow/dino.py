@@ -141,7 +141,7 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
             logger.debug("Running teacher")
             y_t = teacher(teacher_events.to(DEVICE).float())
             logger.debug("Computing loss")
-            dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=1.0, t_temp=0.9)
+            dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=0.2, t_temp=0.05)
             koleo_loss = koleoloss(y_s)
             cos_sim_loss_val = cos_sim_loss(y_s, y_t)
             cs_loss_sum += cos_sim_loss_val.item()
@@ -264,8 +264,8 @@ def train_dino(conf, run_name):
         ckpt = torch.load(conf['checkpoint'], weights_only=False, map_location=DEVICE)
         logger.info(f"Found model configuration: {ckpt['modelconf']}")
         modelconf = ckpt['modelconf']
-        student = TubeEncoderWithProjection(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads'], hidden_dim=modelconf['hidden_dim'], projection_dim=modelconf['projection_dim']).to(DEVICE)
-        teacher = TubeEncoderWithProjection(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads'], hidden_dim=modelconf['hidden_dim'], projection_dim=modelconf['projection_dim']).to(DEVICE)
+        student = TubeEncoderWithProjection(num_features=modelconf['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
+        teacher = TubeEncoderWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
 
         conf['model'] = modelconf
         start_epoch = conf.get("epoch", 0)
