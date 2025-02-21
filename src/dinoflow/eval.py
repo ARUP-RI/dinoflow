@@ -28,7 +28,7 @@ class ClassificationHead(nn.Module):
         )
 
     def forward(self, x):
-        return self.fc(x)
+        return self.layers(x)
 
 def load_checkpoint(path):
     """
@@ -51,10 +51,8 @@ def train_classifier(backbone, classifier, dataloader, optimizer, epochs, tube='
     criterion = nn.CrossEntropyLoss()
     for epoch in range(epochs):
         for i, (batch, labels) in enumerate(dataloader):
-            print(f"Batch: {batch}")
             optimizer.zero_grad()
-            batch = torch.stack(batch[tube])
-            representations = backbone(batch)
+            representations = backbone(batch.to(DEVICE).float())
             preds = classifier(representations)
             loss = criterion(preds, labels)
             logger.info(f"Epoch {epoch} Batch {i} Loss {loss.item() :.4f}")
@@ -63,22 +61,22 @@ def train_classifier(backbone, classifier, dataloader, optimizer, epochs, tube='
             optimizer.step()
 
 @app.command()
-def train(train_labels, test_labels, checkpoint, events=4096) :
+def train(train_labels, test_labels, checkpoint, events: int = 4096) :
     """
     Evaluate the model on the test set
     """
-    model = load_checkpoint(checkpoint)
+    model = load_checkpoint(checkpoint).to(DEVICE)
     for p in model.parameters():
         p.requires_grad = False
 
-    classifier = ClassificationHead(model.cls_token.shape[-1], 2)
+    classifier = ClassificationHead(model.cls_token.shape[-1], 2).to(DEVICE)
     optimizer = torch.optim.Adam(classifier.parameters(), lr=0.001)
 
-    traindata = TubeData(train_labels, tubes_to_return=["m"], events_to_return=events)
+    traindata = TubeData(train_labels, tubes_to_return=["m"], events_to_return=int(events))
     trainloader = DataLoader(traindata, batch_size=128, shuffle=True)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
 
-    valdata = TubeData(test_labels, tubes_to_return=["m"], events_to_return=events)
+    valdata = TubeData(test_labels, tubes_to_return=["m"], events_to_return=int(events))
     valloader = DataLoader(valdata, batch_size=128, shuffle=False)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
 
