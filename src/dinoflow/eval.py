@@ -50,7 +50,7 @@ def train_classifier(backbone, classifier, dataloader, optimizer, val_loader, ep
     Train a classifier on the data
     """
     criterion = nn.BCELoss()
-    backbone.eval()
+    backbone.train()
     classifier.train()
     for epoch in range(epochs):
         for i, (batch, labels) in enumerate(dataloader):
@@ -58,7 +58,8 @@ def train_classifier(backbone, classifier, dataloader, optimizer, val_loader, ep
             representations = backbone(batch.to(DEVICE).float())
             preds = classifier(representations)
             loss = criterion(preds, labels.to(DEVICE).float().unsqueeze(1))
-            logger.info(f"Epoch {epoch} Batch {i} Loss {loss.item() :.4f}")
+            if i & 10 == 0:
+                logger.info(f"Epoch {epoch} Batch {i} Loss {loss.item() :.4f}")
             
             loss.backward()
             optimizer.step()
@@ -85,21 +86,21 @@ def train(train_labels, test_labels, checkpoint, events: int = 4096) :
     Evaluate the model on the test set
     """
     model = load_checkpoint(checkpoint).to(DEVICE)
-    for p in model.parameters():
-        p.requires_grad = False
+    #for p in model.parameters():
+    #    p.requires_grad = False
 
     classifier = ClassificationHead(model.cls_token.shape[-1], 1).to(DEVICE)
-    optimizer = torch.optim.Adam(classifier.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(classifier.parameters(), lr=0.0005)
 
     traindata = TubeData(train_labels, tubes_to_return=["m"], events_to_return=int(events))
-    trainloader = DataLoader(traindata, batch_size=128, shuffle=True)
+    trainloader = DataLoader(traindata, batch_size=64, shuffle=True)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
 
     valdata = TubeData(test_labels, tubes_to_return=["m"], events_to_return=int(events))
-    valloader = DataLoader(valdata, batch_size=128, shuffle=False)
+    valloader = DataLoader(valdata, batch_size=64, shuffle=False)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
 
-    train_classifier(model, classifier, trainloader, optimizer, 10, tube='m')
+    train_classifier(model, classifier, trainloader, optimizer, valloader, 10, tube='m')
 
 
 if __name__ == "__main__":
