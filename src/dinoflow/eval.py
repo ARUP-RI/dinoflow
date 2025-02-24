@@ -93,12 +93,12 @@ class ClassificationModel(pl.LightningModule):
         recall = self.recall.compute()
         fscore = self.f1score.compute()
 
-        self.log('precision', precision)
-        self.log('accuracy', accuracy)
-        self.log('recall', recall)
-        self.log('fscore', fscore)
-        self.log('val_loss', self.validation_loss_mean.compute())
-        self.log('training_loss', self.training_loss_mean.compute())
+        self.log('precision', precision, sync_dist=True )
+        self.log('accuracy', accuracy, sync_dist=True)
+        self.log('recall', recall, sync_dist=True)
+        self.log('fscore', fscore, sync_dist=True)
+        self.log('val_loss', self.validation_loss_mean.compute(), sync_dist=True)
+        self.log('training_loss', self.training_loss_mean.compute(), sync_dist=True)
 
         self.log('learning_rate', lr)
     
