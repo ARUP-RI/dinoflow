@@ -34,7 +34,6 @@ class ClassificationHead(nn.Module):
             nn.Linear(num_features, num_features),
             nn.GELU(),
             nn.Linear(num_features, num_classes),
-            nn.Sigmoid()
         )
 
     def forward(self, x):
@@ -67,7 +66,7 @@ class ClassificationModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self(x)
-        loss = nn.BCELoss()(y_hat.squeeze(1), y.float())
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(y_hat.squeeze(1), y.float())
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -77,24 +76,25 @@ class ClassificationModel(pl.LightningModule):
         self.all_val_labels.append(y)
     
     def on_validation_epoch_end(self):
-        lrsched = next(self.lr_schedulers())
+        lrsched = self.lr_schedulers()
         lr = lrsched.get_last_lr()[0]
         all_preds = torch.cat(self.all_val_predictions)
         all_labels = torch.cat(self.all_val_labels)
         threshold = find_best_threshold(all_preds, all_labels)
-        precision, recall, fscore, support = precision_recall_fscore_support(all_labels.cpu().numpy(), all_preds.cpu().numpy() > threshold, average='binary')
+        precision, recall, fscore, support = precision_recall_fscore_support(all_labels.cpu().float().numpy(), all_preds.cpu().float().numpy() > threshold, average='binary')
+        logger.info(f"Computing validation stats for {len(all_labels)} samples (shape: {all_labels.shape})")
         self.log('precision', precision)
         self.log('recall', recall)
         self.log('fscore', fscore)
         self.log('threshold', threshold)
         self.log('learning_rate', lr)
-        self.comet_logger.log_metrics({
-            "precision": precision,
-            "recall": recall,
-            "fscore": fscore,
-            "threshold": threshold,
-            "learning_rate": lr,
-        })
+        #self.logger.log_metrics({
+        #    "precision": precision,
+        #    "recall": recall,
+        #    "fscore": fscore,
+        #    "threshold": threshold,
+        #    "learning_rate": lr,
+        #})
         self.all_val_predictions = []
         self.all_val_labels = []
     
@@ -120,7 +120,7 @@ def find_best_threshold(predictions, labels):
     best_fscore = 0
     best_threshold = 0
     for threshold in np.arange(0.00001, 0.9999, 0.1):
-        precision, recall, fscore, support = precision_recall_fscore_support(labels.cpu().numpy(), predictions.cpu().numpy() > threshold, average='binary')
+        precision, recall, fscore, support = precision_recall_fscore_support(labels.cpu().float().numpy(), predictions.cpu().float().numpy() > threshold, average='binary')
         if fscore > best_fscore:
             best_fscore = fscore
             best_threshold = threshold
@@ -150,6 +150,7 @@ def train(run_name, train_labels, test_labels, backbone: str, checkpoint: str = 
         logger.info("Unfreezing backbone")
         backbone.train()
 
+    torch.set_float32_matmul_precision('medium')
     
     traindata = TubeData(train_labels, tubes_to_return=["m"], events_to_return=int(events))
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)
@@ -168,6 +169,7 @@ def train(run_name, train_labels, test_labels, backbone: str, checkpoint: str = 
 
     trainer = pl.Trainer(max_epochs=epochs,
                         accelerator='auto',
+                        precision="bf16-mixed",
                         callbacks=[
                             ModelCheckpoint(monitor='fscore', mode='max', save_top_k=1, save_last=True),
                             LearningRateMonitor(logging_interval='step'),
