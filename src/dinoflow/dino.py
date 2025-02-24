@@ -91,7 +91,7 @@ def dino_loss(ys, yt, C, s_temp=1, t_temp=0.5, eps=1e-8):
     return -1 * (tm * torch.log(sm + eps)).sum(dim=1).mean()
 
 
-def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_reps):
+def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_reps, student_augs=None, teacher_augs=None):
     """
     Sample n_teacher_events for each member of the batch, then from those events repeatedly sample n_student_events
     n_student_reps times 
@@ -101,9 +101,13 @@ def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_
     all_student_events = []
     for i in range(n_student_reps):
         student_events = subsample_events(teacher_events, n_student_events)
+        if student_augs is not None:
+            student_events = student_augs(student_events)
         all_student_events.append(student_events)
     
-    teacher_events = teacher_events.repeat(n_student_reps, 1, 1)
+    if teacher_augs is not None:
+        teacher_events = teacher_augs(teacher_events)
+
     all_student_events = torch.cat(all_student_events, dim=0)
     return teacher_events, all_student_events
 
@@ -140,6 +144,8 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
             y_s  = student(student_events.to(DEVICE).float())
             logger.debug("Running teacher")
             y_t = teacher(teacher_events.to(DEVICE).float())
+            y_t = y_t.repeat(n_student_reps, 1, 1)
+
             logger.debug("Computing loss")
             dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=0.2, t_temp=0.05)
             koleo_loss = koleoloss(y_s)
@@ -329,6 +335,12 @@ def train_dino(conf, run_name):
 
     teacher_events_schedule = LinearScheduler(conf['training']['teacher_events_start'], conf['training']['teacher_events_end'], conf['training']['teacher_events_steps'])
 
+    student_augs = compose([
+        partial(scale, p=0.5, scale=0.1),
+        partial(shift, p=0.5, scale=0.1),
+        partial(noise, p=0.75, scale=0.2),
+    ])
+
     #logger.info(f"Proc: {os.getpid()} device: {device_id} w: {student.module.backbone.embedding[0].weight[0, :]}")
     for epoch in range(start_epoch, start_epoch + conf['training']['epochs']):
 
@@ -341,7 +353,7 @@ def train_dino(conf, run_name):
                    teacher_center=teacher_center,
                    lr_schedule=lrschedule,
                    koleo_loss_weight=conf['training']['koleo_loss_weight'],
-                   )
+                   student_augs=student_augs)
         teacher_center = epoch_results['teacher_center']
         cosine_sim = epoch_results['cosine_sim']
         logger.info(f"Epoch #{epoch} LR: {lrschedule.get_lr()[0] :.5f} Loss: {epoch_results['epoch_loss'] :.4f}  cos. sim: {epoch_results['cosine_sim'] :.4f} self_cosim_mean: {epoch_results['self_cosim_mean'] :.4f} other_cosim_mean: {epoch_results['other_cosim_mean'] :.4f}")
