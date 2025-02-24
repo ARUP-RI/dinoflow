@@ -15,7 +15,8 @@ from sklearn.metrics import precision_recall_fscore_support
 from dinoflow.models import TubeEncoderWithProjection
 from dinoflow.data import TubeData, collate_fn
 from dinoflow import util
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, CometLogger
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.loggers import CometLogger
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
