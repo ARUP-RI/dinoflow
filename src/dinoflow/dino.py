@@ -340,9 +340,9 @@ def train_dino(conf, run_name):
     teacher_events_schedule = LinearScheduler(conf['training']['teacher_events_start'], conf['training']['teacher_events_end'], conf['training']['teacher_events_steps'])
 
     student_augs = compose([
-        partial(scale, p=0.5, scale=0.1),
-        partial(shift, p=0.45, scale=0.1),
-        partial(noise, p=0.75, scale=0.2),
+        partial(scale, prob=0.5, scale=0.1),
+        partial(shift, prob=0.45, scale=0.1),
+        partial(noise, prob=0.75, scale=0.2),
     ])
 
     #logger.info(f"Proc: {os.getpid()} device: {device_id} w: {student.module.backbone.embedding[0].weight[0, :]}")
