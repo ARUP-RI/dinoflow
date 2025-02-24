@@ -132,17 +132,26 @@ def train(run_name, train_labels, test_labels, backbone: str = None, checkpoint:
     if backbone is None and checkpoint is None:
         raise ValueError("Must specify one of backbone of checkpoint")
 
-    backbone = load_checkpoint(backbone).to(DEVICE)
+    if backbone is not None:
+        logger.info(f"Loading backbone from {backbone}, starting with randomly initialized classifier head")
+        backbone = load_checkpoint(backbone).to(DEVICE)
+        classifier = ClassificationHead(backbone.cls_token.shape[-1], 1).to(DEVICE)
+        model = ClassificationModel(backbone, classifier)
+    else:
+        logger.info(f"Loading full model checkpoint from {checkpoint}")
+        model = ClassificationModel.load_from_checkpoint(checkpoint)
+        backbone = model.model.backbone
+    
     if freeze_backbone:
-        backbone.eval()
+        logger.info("Freezing backbone")
+        backbone.eval() # freeze backbone
         for p in backbone.parameters():
             p.requires_grad = False
     else:
+        logger.info("Unfreezing backbone")
         backbone.train()
 
-    classifier = ClassificationHead(backbone.cls_token.shape[-1], 1).to(DEVICE)
-    model = ClassificationModel(backbone, classifier)
-
+    
     traindata = TubeData(train_labels, tubes_to_return=["m"], events_to_return=int(events))
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
@@ -153,8 +162,8 @@ def train(run_name, train_labels, test_labels, backbone: str = None, checkpoint:
 
     comet_logger = CometLogger(
             workspace="brendan",  # Optional
-            save_dir="aml_classifier_runs",  # Optional
-            project_name="dinflow-classifier",  # Optional
+            save_dir="dinoflow_classifier_runs",  # Optional
+            project_name="dinoflow-classifier",  # Optional
             experiment_name=run_name,  # Optional
         )
 
