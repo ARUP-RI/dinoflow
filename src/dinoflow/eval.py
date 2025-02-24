@@ -82,7 +82,6 @@ class ClassificationModel(pl.LightningModule):
         all_labels = torch.cat(self.all_val_labels)
         threshold = find_best_threshold(all_preds, all_labels)
         precision, recall, fscore, support = precision_recall_fscore_support(all_labels.cpu().float().numpy(), all_preds.cpu().float().numpy() > threshold, average='binary')
-        logger.info(f"Computing validation stats for {len(all_labels)} samples (shape: {all_labels.shape})")
         self.log('precision', precision)
         self.log('recall', recall)
         self.log('fscore', fscore)
