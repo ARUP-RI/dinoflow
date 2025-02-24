@@ -77,6 +77,8 @@ class ClassificationModel(pl.LightningModule):
         self.all_val_labels.append(y)
     
     def on_validation_epoch_end(self):
+        lrsched = next(self.lr_schedulers())
+        lr = lrsched.get_last_lr()[0]
         all_preds = torch.cat(self.all_val_predictions)
         all_labels = torch.cat(self.all_val_labels)
         threshold = find_best_threshold(all_preds, all_labels)
@@ -85,13 +87,13 @@ class ClassificationModel(pl.LightningModule):
         self.log('recall', recall)
         self.log('fscore', fscore)
         self.log('threshold', threshold)
-        self.log('learning_rate', self.optimizers()[0].param_groups[0]['lr'])
+        self.log('learning_rate', lr)
         self.comet_logger.log_metrics({
             "precision": precision,
             "recall": recall,
             "fscore": fscore,
             "threshold": threshold,
-            "learning_rate": self.optimizers()[0].param_groups[0]['lr'],
+            "learning_rate": lr,
         })
         self.all_val_predictions = []
         self.all_val_labels = []
