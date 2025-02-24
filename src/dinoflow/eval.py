@@ -142,14 +142,22 @@ def train(run_name, train_labels, test_labels, checkpoint, freeze_backbone=False
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
 
+    comet_logger = CometLogger(
+            workspace="brendan",  # Optional
+            save_dir="aml_classifier_runs",  # Optional
+            project_name="dinflow-classifier",  # Optional
+            experiment_name=run_name,  # Optional
+        )
+
     trainer = pl.Trainer(max_epochs=epochs,
                         accelerator='auto',
                         devices=1,
                         callbacks=[
                             ModelCheckpoint(monitor='fscore', mode='max', save_top_k=1, save_last=True),
                             LearningRateMonitor(logging_interval='step'),
-                            CometLogger(project_name="dinoflow-classifier", experiment_name=run_name)
-                        ])
+                        ],
+                        logger=comet_logger)
+
     trainer.fit(model, trainloader, valloader)
 
 
