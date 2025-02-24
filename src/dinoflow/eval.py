@@ -6,11 +6,11 @@ import typer
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
+from torchmetrics.classification import BinaryPrecisionRecallCurve, BinaryF1Score, BinaryRecall, BinaryPrecision, BinaryAccuracy
 
 from torch.utils.data import DataLoader
 import numpy as np
 
-from sklearn.metrics import precision_recall_fscore_support
 
 from dinoflow.models import TubeEncoderWithProjection
 from dinoflow.data import TubeData, collate_fn
@@ -53,12 +53,14 @@ class ClassificationModel(pl.LightningModule):
     def __init__(self, backbone, classifier, min_lr=0.00001, max_lr=0.001, warmup_iters=100, lr_decay_iters=5000):
         super().__init__()
         self.model = CombinedModel(backbone, classifier)
-        self.all_val_predictions = []
-        self.all_val_labels = []
         self.min_lr = min_lr
         self.max_lr = max_lr
         self.warmup_iters = warmup_iters
         self.lr_decay_iters = lr_decay_iters
+        self.accuracy = BinaryAccuracy()
+        self.precision = BinaryPrecision()
+        self.recall = BinaryRecall()
+        self.f1score = BinaryF1Score()
 
     def forward(self, x):
         return self.model(x)
@@ -70,33 +72,38 @@ class ClassificationModel(pl.LightningModule):
         return loss
     
     def validation_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self(x)
-        self.all_val_predictions.append(y_hat)
-        self.all_val_labels.append(y)
-    
+        x, labels = batch
+        preds = self(x)
+        self.accuracy(preds, labels > 0.5)
+        self.precision(preds, labels > 0.5)
+        self.recall(preds, labels > 0.5)
+        self.f1score(preds, labels > 0.5)
+
     def on_validation_epoch_end(self):
         lrsched = self.lr_schedulers()
         lr = lrsched.get_last_lr()[0]
-        all_preds = torch.cat(self.all_val_predictions)
-        all_labels = torch.cat(self.all_val_labels)
-        threshold = find_best_threshold(all_preds, all_labels)
-        precision, recall, fscore, support = precision_recall_fscore_support(all_labels.cpu().float().numpy(), all_preds.cpu().float().numpy() > threshold, average='binary')
+        accuracy = self.accuracy.compute()
+        precision = self.precision.compute()
+        recall = self.recall.compute()
+        fscore = self.f1score.compute()
+
         self.log('precision', precision)
+        self.log('accuracy', accuracy)
         self.log('recall', recall)
         self.log('fscore', fscore)
-        self.log('threshold', threshold)
         self.log('learning_rate', lr)
-        #self.logger.log_metrics({
-        #    "precision": precision,
-        #    "recall": recall,
-        #    "fscore": fscore,
-        #    "threshold": threshold,
-        #    "learning_rate": lr,
-        #})
-        self.all_val_predictions = []
-        self.all_val_labels = []
     
+        self.comet_logger.log_metrics({
+            "precision": precision,
+            "recall": recall,
+            "fscore": fscore,
+            "learning_rate": lr,
+        })
+        self.accuracy.reset()
+        self.precision.reset()
+        self.recall.reset()
+        self.f1score.reset()
+
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
         lrschedule = util.WarmupCosineLRScheduler(optimizer, self.max_lr, self.min_lr, self.warmup_iters, self.lr_decay_iters)
@@ -113,17 +120,6 @@ def load_checkpoint(path):
 
     teacher.load_state_dict(ckpt['teacher'])
     return teacher.tube_encoder
-
-
-def find_best_threshold(predictions, labels):
-    best_fscore = 0
-    best_threshold = 0
-    for threshold in np.arange(0.00001, 0.9999, 0.1):
-        precision, recall, fscore, support = precision_recall_fscore_support(labels.cpu().float().numpy(), predictions.cpu().float().numpy() > threshold, average='binary')
-        if fscore > best_fscore:
-            best_fscore = fscore
-            best_threshold = threshold
-    return best_threshold
 
 
 @app.command()

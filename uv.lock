@@ -433,6 +433,7 @@ dependencies = [
     { name = "pytorch-lightning" },
     { name = "pyyaml" },
     { name = "torch" },
+    { name = "torchmetrics" },
     { name = "typer" },
     { name = "umap" },
 ]
@@ -446,6 +447,7 @@ requires-dist = [
     { name = "pytorch-lightning", specifier = ">=2.5.0.post0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "torch", specifier = ">=2.6.0" },
+    { name = "torchmetrics", specifier = ">=1.6.1" },
     { name = "typer", specifier = ">=0.15.1" },
     { name = "umap", specifier = ">=0.1.1" },
 ]
