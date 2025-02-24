@@ -73,7 +73,7 @@ class ClassificationModel(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         x, labels = batch
-        preds = self(x)
+        preds = self(x).squeeze(-1)
         self.accuracy(preds, labels > 0.5)
         self.precision(preds, labels > 0.5)
         self.recall(preds, labels > 0.5)
@@ -93,12 +93,6 @@ class ClassificationModel(pl.LightningModule):
         self.log('fscore', fscore)
         self.log('learning_rate', lr)
     
-        self.comet_logger.log_metrics({
-            "precision": precision,
-            "recall": recall,
-            "fscore": fscore,
-            "learning_rate": lr,
-        })
         self.accuracy.reset()
         self.precision.reset()
         self.recall.reset()
