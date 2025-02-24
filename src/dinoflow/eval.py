@@ -15,7 +15,7 @@ from sklearn.metrics import precision_recall_fscore_support
 from dinoflow.models import TubeEncoderWithProjection
 from dinoflow.data import TubeData, collate_fn
 from dinoflow import util
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, CometLogger
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -119,7 +119,7 @@ def find_best_threshold(predictions, labels):
 
 
 @app.command()
-def train(train_labels, test_labels, checkpoint, freeze_backbone=False, batch_size: int=16, events: int = 4096, epochs: int = 25) :
+def train(run_name, train_labels, test_labels, checkpoint, freeze_backbone=False, batch_size: int=16, events: int = 4096, epochs: int = 25) :
     """
     Evaluate the model on the test set
     """
@@ -148,6 +148,7 @@ def train(train_labels, test_labels, checkpoint, freeze_backbone=False, batch_si
                         callbacks=[
                             ModelCheckpoint(monitor='fscore', mode='max', save_top_k=1, save_last=True),
                             LearningRateMonitor(logging_interval='step'),
+                            CometLogger(project_name="dinoflow-classifier", experiment_name=run_name)
                         ])
     trainer.fit(model, trainloader, valloader)
 
