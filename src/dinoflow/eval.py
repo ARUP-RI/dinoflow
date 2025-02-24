@@ -15,7 +15,7 @@ from sklearn.metrics import precision_recall_fscore_support
 from dinoflow.models import TubeEncoderWithProjection
 from dinoflow.data import TubeData, collate_fn
 from dinoflow import util
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, CometLogger
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -50,7 +50,7 @@ class CombinedModel(nn.Module):
 
 
 class ClassificationModel(pl.LightningModule):
-    def __init__(self, backbone, classifier, min_lr=0.00001, max_lr=0.001, warmup_iters=500, lr_decay_iters=1000):
+    def __init__(self, backbone, classifier, min_lr=0.00001, max_lr=0.001, warmup_iters=100, lr_decay_iters=5000):
         super().__init__()
         self.model = CombinedModel(backbone, classifier)
         self.all_val_predictions = []
@@ -93,8 +93,6 @@ class ClassificationModel(pl.LightningModule):
         return [optimizer], [lrschedule]
 
 
-
-
 def load_checkpoint(path):
     """
     Load a checkpoint from a file
@@ -119,7 +117,7 @@ def find_best_threshold(predictions, labels):
 
 
 @app.command()
-def train(train_labels, test_labels, backbone: str = None, checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25) :
+def train(run_name, train_labels, test_labels, backbone: str = None, checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25) :
     """
     Evaluate the model on the test set
     """
@@ -150,6 +148,7 @@ def train(train_labels, test_labels, backbone: str = None, checkpoint: str = Non
                         callbacks=[
                             ModelCheckpoint(monitor='fscore', mode='max', save_top_k=1, save_last=True),
                             LearningRateMonitor(logging_interval='step'),
+                            CometLogger(project_name="dinoflow-classifier", experiment_name=run_name)
                         ])
     trainer.fit(model, trainloader, valloader)
 
