@@ -84,6 +84,14 @@ class ClassificationModel(pl.LightningModule):
         self.log('recall', recall)
         self.log('fscore', fscore)
         self.log('threshold', threshold)
+        self.log('learning_rate', self.optimizers()[0].param_groups[0]['lr'])
+        self.comet_logger.log_metrics({
+            "precision": precision,
+            "recall": recall,
+            "fscore": fscore,
+            "threshold": threshold,
+            "learning_rate": self.optimizers()[0].param_groups[0]['lr'],
+        })
         self.all_val_predictions = []
         self.all_val_labels = []
     
