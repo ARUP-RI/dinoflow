@@ -7,16 +7,16 @@ data:
 model:
   num_features: 13
   model_dim: 512
-  layers: 8
+  layers: 10
   heads: 4
   projection_dim: 256
   hidden_dim: 256
 
 
 training:
-  batch_size: 100
-  min_lr: 0.00001 # 0.0000001
-  max_lr: 0.00002
+  batch_size: 128
+  min_lr: 0.0000001
+  max_lr: 0.00005
   warmup_iters: 5000
   lr_decay_iters: 50000
   epochs: 100
@@ -26,11 +26,11 @@ training:
   teacher_momentum_end: 0.999
   teacher_momentum_steps: 5000
 
-  teacher_events_start: 8192
-  teacher_events_end: 8192
+  teacher_events_start: 4096
+  teacher_events_end: 4096
   teacher_events_steps: 50000
 
-  koleo_loss_weight: 0.0
+  koleo_loss_weight: 0.005
   n_student_events: 1024
   n_student_reps: 2
 

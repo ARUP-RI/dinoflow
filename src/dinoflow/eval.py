@@ -48,8 +48,9 @@ class CombinedModel(nn.Module):
     def forward(self, x):
         return self.classifier(self.backbone(x.float()))
 
+
 class ClassificationModel(pl.LightningModule):
-    def __init__(self, backbone, classifier, min_lr=0.00001, max_lr=0.001, warmup_iters=500, lr_decay_iters=1000):
+    def __init__(self, backbone, classifier, min_lr=0.00001, max_lr=0.001, warmup_iters=100, lr_decay_iters=5000):
         super().__init__()
         self.model = CombinedModel(backbone, classifier)
         self.all_val_predictions = []
@@ -65,7 +66,7 @@ class ClassificationModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self(x)
-        loss = nn.BCELoss()(y_hat, y)
+        loss = nn.BCELoss()(y_hat.squeeze(1), y.float())
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -74,12 +75,11 @@ class ClassificationModel(pl.LightningModule):
         self.all_val_predictions.append(y_hat)
         self.all_val_labels.append(y)
     
-
     def on_validation_epoch_end(self):
         all_preds = torch.cat(self.all_val_predictions)
         all_labels = torch.cat(self.all_val_labels)
         threshold = find_best_threshold(all_preds, all_labels)
-        precision, recall, fscore, support = precision_recall_fscore_support(all_labels, all_preds > threshold, average='binary')
+        precision, recall, fscore, support = precision_recall_fscore_support(all_labels.cpu().numpy(), all_preds.cpu().numpy() > threshold, average='binary')
         self.log('precision', precision)
         self.log('recall', recall)
         self.log('fscore', fscore)
@@ -101,8 +101,6 @@ class ClassificationModel(pl.LightningModule):
         return [optimizer], [lrschedule]
 
 
-
-
 def load_checkpoint(path):
     """
     Load a checkpoint from a file
@@ -119,7 +117,7 @@ def find_best_threshold(predictions, labels):
     best_fscore = 0
     best_threshold = 0
     for threshold in np.arange(0.00001, 0.9999, 0.1):
-        precision, recall, fscore, support = precision_recall_fscore_support(labels, predictions > threshold, average='binary')
+        precision, recall, fscore, support = precision_recall_fscore_support(labels.cpu().numpy(), predictions.cpu().numpy() > threshold, average='binary')
         if fscore > best_fscore:
             best_fscore = fscore
             best_threshold = threshold
@@ -127,11 +125,14 @@ def find_best_threshold(predictions, labels):
 
 
 @app.command()
-def train(run_name, train_labels, test_labels, checkpoint, freeze_backbone=False, batch_size: int=16, events: int = 4096, epochs: int = 25) :
+def train(run_name, train_labels, test_labels, backbone: str = None, checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25) :
     """
     Evaluate the model on the test set
     """
-    backbone = load_checkpoint(checkpoint).to(DEVICE)
+    if backbone is None and checkpoint is None:
+        raise ValueError("Must specify one of backbone of checkpoint")
+
+    backbone = load_checkpoint(backbone).to(DEVICE)
     if freeze_backbone:
         backbone.eval()
         for p in backbone.parameters():
@@ -140,14 +141,14 @@ def train(run_name, train_labels, test_labels, checkpoint, freeze_backbone=False
         backbone.train()
 
     classifier = ClassificationHead(backbone.cls_token.shape[-1], 1).to(DEVICE)
-    model = CombinedModel(backbone, classifier)
+    model = ClassificationModel(backbone, classifier)
 
     traindata = TubeData(train_labels, tubes_to_return=["m"], events_to_return=int(events))
-    trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True)
+    trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
 
     valdata = TubeData(test_labels, tubes_to_return=["m"], events_to_return=int(events))
-    valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False)
+    valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
 
     comet_logger = CometLogger(
@@ -159,7 +160,6 @@ def train(run_name, train_labels, test_labels, checkpoint, freeze_backbone=False
 
     trainer = pl.Trainer(max_epochs=epochs,
                         accelerator='auto',
-                        devices=1,
                         callbacks=[
                             ModelCheckpoint(monitor='fscore', mode='max', save_top_k=1, save_last=True),
                             LearningRateMonitor(logging_interval='step'),
