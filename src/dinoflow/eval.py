@@ -126,22 +126,18 @@ def find_best_threshold(predictions, labels):
 
 
 @app.command()
-def train(run_name, train_labels, test_labels, backbone: str = None, checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25) :
+def train(run_name, train_labels, test_labels, backbone: str, checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25) :
     """
     Evaluate the model on the test set
     """
-    if backbone is None and checkpoint is None:
-        raise ValueError("Must specify one of backbone of checkpoint")
+    logger.info(f"Loading backbone from {backbone}")
+    backbone = load_checkpoint(backbone)
+    classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
+    model = ClassificationModel(backbone, classifier)
 
-    if backbone is not None:
-        logger.info(f"Loading backbone from {backbone}, starting with randomly initialized classifier head")
-        backbone = load_checkpoint(backbone).to(DEVICE)
-        classifier = ClassificationHead(backbone.cls_token.shape[-1], 1).to(DEVICE)
-        model = ClassificationModel(backbone, classifier)
-    else:
+    if checkpoint is not None:
         logger.info(f"Loading full model checkpoint from {checkpoint}")
-        model = ClassificationModel.load_from_checkpoint(checkpoint)
-        backbone = model.model.backbone
+        model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier)    
     
     if freeze_backbone:
         logger.info("Freezing backbone")
