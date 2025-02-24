@@ -98,21 +98,25 @@ def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_
     """
     assert n_student_events <= n_teacher_events
     teacher_events = subsample_batch(batch, n_teacher_events)
+
+    # Apply teacher augs here so they affect both teacher and student events
+    if teacher_augs is not None:
+        teacher_events = teacher_augs(teacher_events)
+
     all_student_events = []
     for i in range(n_student_reps):
         student_events = subsample_events(teacher_events, n_student_events)
         if student_augs is not None:
-            student_events = student_augs(student_events)
+            student_events = student_augs(student_events.clone())
+
         all_student_events.append(student_events)
     
-    if teacher_augs is not None:
-        teacher_events = teacher_augs(teacher_events)
 
     all_student_events = torch.cat(all_student_events, dim=0)
     return teacher_events, all_student_events
 
 
-def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_student_events, n_student_reps, center_mo, teacher_mo_schedule, teacher_center, lr_schedule, koleo_loss_weight):
+def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_student_events, n_student_reps, center_mo, teacher_mo_schedule, teacher_center, lr_schedule, koleo_loss_weight, student_augs=None):
     """
     Conduct a single DINO epoch
     For each batch, augment the data and pass to the student and send un-augmented data to the teacher, the loss
@@ -136,7 +140,7 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
         n_teacher_events = int(teacher_events_schedule.current_value())
         optimizer.zero_grad()
         logger.debug("Generating teacher and student samples")
-        teacher_events, student_events = student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_reps)
+        teacher_events, student_events = student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_reps, student_augs=student_augs)
 
         with torch.amp.autocast(enabled=enable_autocast, device_type=device_type):
             # Augment the data and do a forward pass through both the student and teacher models    
@@ -337,7 +341,7 @@ def train_dino(conf, run_name):
 
     student_augs = compose([
         partial(scale, p=0.5, scale=0.1),
-        partial(shift, p=0.5, scale=0.1),
+        partial(shift, p=0.45, scale=0.1),
         partial(noise, p=0.75, scale=0.2),
     ])
 
