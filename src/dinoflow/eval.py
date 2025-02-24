@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 from torchmetrics.classification import BinaryPrecisionRecallCurve, BinaryF1Score, BinaryRecall, BinaryPrecision, BinaryAccuracy
+from torchmetrics.aggregation import MeanMetric, SumMetric
 
 from torch.utils.data import DataLoader
 import numpy as np
@@ -50,7 +51,7 @@ class CombinedModel(nn.Module):
 
 
 class ClassificationModel(pl.LightningModule):
-    def __init__(self, backbone, classifier, min_lr=0.00001, max_lr=0.001, warmup_iters=100, lr_decay_iters=5000):
+    def __init__(self, backbone, classifier, min_lr=0.00001, max_lr=0.001, warmup_iters=5, lr_decay_iters=50):
         super().__init__()
         self.model = CombinedModel(backbone, classifier)
         self.min_lr = min_lr
@@ -61,14 +62,17 @@ class ClassificationModel(pl.LightningModule):
         self.precision = BinaryPrecision()
         self.recall = BinaryRecall()
         self.f1score = BinaryF1Score()
+        self.training_loss_mean = MeanMetric()
+        self.validation_loss_mean = MeanMetric()
 
     def forward(self, x):
         return self.model(x)
     
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self(x)
-        loss = torch.nn.functional.binary_cross_entropy_with_logits(y_hat.squeeze(1), y.float())
+        x, labels = batch
+        preds = self(x)
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(preds.squeeze(1), labels.float())
+        self.training_loss_mean.update(loss)
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -78,6 +82,8 @@ class ClassificationModel(pl.LightningModule):
         self.precision(preds, labels > 0.5)
         self.recall(preds, labels > 0.5)
         self.f1score(preds, labels > 0.5)
+        loss = nn.BCELoss()(preds.squeeze(1), labels.float())
+        self.validation_loss_mean.update(loss)
 
     def on_validation_epoch_end(self):
         lrsched = self.lr_schedulers()
@@ -91,6 +97,9 @@ class ClassificationModel(pl.LightningModule):
         self.log('accuracy', accuracy)
         self.log('recall', recall)
         self.log('fscore', fscore)
+        self.log('val_loss', self.validation_loss_mean.compute())
+        self.log('training_loss', self.training_loss_mean.compute())
+
         self.log('learning_rate', lr)
     
         self.accuracy.reset()
