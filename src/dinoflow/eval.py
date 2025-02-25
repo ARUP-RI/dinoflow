@@ -79,6 +79,8 @@ class ClassificationModel(pl.LightningModule):
         x, labels = batch
         preds = self(x).squeeze(-1)
         preds = torch.nn.Sigmoid()(preds) # raw outputs are logits, non-sigmoid
+        #for p, l in zip(preds, labels):
+        #    print(f"{p.item() :.4f}\t{l.item() :.2f}")
         self.accuracy(preds, labels)
         self.precision(preds, labels)
         self.recall(preds, labels)
