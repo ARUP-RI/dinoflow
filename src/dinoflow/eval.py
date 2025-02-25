@@ -51,7 +51,7 @@ class CombinedModel(nn.Module):
 
 
 class ClassificationModel(pl.LightningModule):
-    def __init__(self, backbone, classifier, min_lr=0.00001, max_lr=0.0001, warmup_iters=10, lr_decay_iters=50):
+    def __init__(self, backbone, classifier, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250):
         super().__init__()
         self.model = CombinedModel(backbone, classifier)
         self.min_lr = min_lr
@@ -78,10 +78,11 @@ class ClassificationModel(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, labels = batch
         preds = self(x).squeeze(-1)
-        self.accuracy(preds, labels > 0.5)
-        self.precision(preds, labels > 0.5)
-        self.recall(preds, labels > 0.5)
-        self.f1score(preds, labels > 0.5)
+        preds = torch.nn.Sigmoid()(preds) # raw outputs are logits, non-sigmoid
+        self.accuracy(preds, labels)
+        self.precision(preds, labels)
+        self.recall(preds, labels)
+        self.f1score(preds, labels)
         loss = torch.nn.functional.binary_cross_entropy_with_logits(preds, labels.float())
         self.validation_loss_mean.update(loss)
 
