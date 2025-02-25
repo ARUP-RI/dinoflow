@@ -329,6 +329,10 @@ class TubeData(Dataset):
             label = 0.0
 
         return tubes, label
+    
+    def get_row_data(self, i):
+        row = self.data.iloc[i]
+        return row.to_dict()
 
 
 def collate_fn(items):
