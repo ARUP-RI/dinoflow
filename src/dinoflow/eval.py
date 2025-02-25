@@ -5,6 +5,7 @@ import typer
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import pytorch_lightning as pl
 from torchmetrics.classification import BinaryPrecisionRecallCurve, BinaryF1Score, BinaryRecall, BinaryPrecision, BinaryAccuracy
 from torchmetrics.aggregation import MeanMetric, SumMetric
@@ -13,7 +14,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 
 
-from dinoflow.models import TubeEncoderWithProjection
+from dinoflow.models import TubeEncoder, TubeEncoderWithProjection
 from dinoflow.data import TubeData, collate_fn
 from dinoflow import util
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
@@ -115,7 +116,7 @@ class ClassificationModel(pl.LightningModule):
 
 def load_checkpoint(path):
     """
-    Load a checkpoint from a file
+    Load a checkpoint from a file and return the tube encoder from the teacher
     """
     ckpt = torch.load(path, weights_only=False, map_location=DEVICE)
     modelconf = ckpt['modelconf']    
@@ -169,13 +170,49 @@ def train(run_name, train_labels, test_labels, backbone: str, checkpoint: str = 
                         accelerator='auto',
                         precision="bf16-mixed",
                         callbacks=[
-                            ModelCheckpoint(monitor='fscore', mode='max', save_top_k=1, save_last=True),
+                            ModelCheckpoint(monitor='fscore', mode='max', save_top_k=1, save_last=True, filename=run_name + "_e{epoch}"),
                             LearningRateMonitor(logging_interval='step'),
                         ],
                         logger=comet_logger)
 
     trainer.fit(model, trainloader, valloader)
 
+
+
+@app.command()
+def predict(checkpoint, test_labels, events: int = 4096, batch_size: int = 16):
+    """
+    Predict the labels for the test set
+    """
+    logger.info(f"Loading checkpoint from {checkpoint}")
+    backbone_conf = {
+        "num_features": 13,
+        "model_dim": 512,
+        "layers": 10,
+        "heads": 4,
+        "hidden_dim": 256,
+        "projection_dim": 256
+    }
+    backbone = TubeEncoder(num_features=backbone_conf['num_features'],
+                                        model_embed_dim=backbone_conf['model_dim'],
+                                        layers=backbone_conf['layers'],
+                                        heads=backbone_conf['heads']).to(DEVICE)
+    classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
+    model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier)  
+    model.eval()
+    testdata = TubeData(test_labels, tubes_to_return=["m"], events_to_return=int(events))
+    testloader = DataLoader(testdata, batch_size=batch_size, shuffle=False, num_workers=16)
+    logger.info(f"Loaded {len(testloader.dataset)} samples for test")
+
+    with torch.inference_mode():
+        for b, (batch, labels) in enumerate(testloader):
+            i = 0
+            preds = model(batch)
+            preds = F.sigmoid(preds)
+            for p, l in zip(preds, labels):
+                rowdata = testdata.get_row_data(b+i)
+                print(f"{rowdata['accession']}\t {p.item() :.4f}\t {l.item()}")
+                i += 1
 
 if __name__ == "__main__":
     app()

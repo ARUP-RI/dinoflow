@@ -116,7 +116,7 @@ def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_
     return teacher_events, all_student_events
 
 
-def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_student_events, n_student_reps, center_mo, teacher_mo_schedule, teacher_center, lr_schedule, koleo_loss_weight, student_augs=None):
+def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_student_events, n_student_reps, center_mo, teacher_mo_schedule, teacher_center, lr_schedule, koleo_loss_schedule, student_augs=None):
     """
     Conduct a single DINO epoch
     For each batch, augment the data and pass to the student and send un-augmented data to the teacher, the loss
@@ -141,7 +141,7 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
         optimizer.zero_grad()
         logger.debug("Generating teacher and student samples")
         teacher_events, student_events = student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_reps, student_augs=student_augs)
-
+        koleo_loss_weight = koleo_loss_schedule.current_value()
         with torch.amp.autocast(enabled=enable_autocast, device_type=device_type):
             # Augment the data and do a forward pass through both the student and teacher models    
             logger.debug("Running student")
@@ -169,6 +169,7 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
 
         teacher_events_schedule.step()
         teacher_mo_schedule.step()
+        koleo_loss_schedule.step()
         param_mo = teacher_mo_schedule.current_value()
         # Update centering and teacher weights
         if i % report_freq == 0:
@@ -339,6 +340,8 @@ def train_dino(conf, run_name):
 
     teacher_events_schedule = LinearScheduler(conf['training']['teacher_events_start'], conf['training']['teacher_events_end'], conf['training']['teacher_events_steps'])
 
+    koleo_schedule = LinearScheduler(conf['training']['koleo_loss_weight_start'], conf['training']['koleo_loss_weight_end'], conf['training']['koleo_loss_weight_steps'])
+
     student_augs = compose([
         partial(scale, p=0.5, scale=0.1),
         partial(shift, p=0.45, scale=0.1),
@@ -356,7 +359,7 @@ def train_dino(conf, run_name):
                    teacher_mo_schedule=teacher_mo_schedule,
                    teacher_center=teacher_center,
                    lr_schedule=lrschedule,
-                   koleo_loss_weight=conf['training']['koleo_loss_weight'],
+                   koleo_loss_schedule=koleo_schedule,
                    student_augs=student_augs)
         teacher_center = epoch_results['teacher_center']
         cosine_sim = epoch_results['cosine_sim']
