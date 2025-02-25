@@ -97,7 +97,8 @@ def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_
     n_student_reps times 
     """
     assert n_student_events <= n_teacher_events
-    teacher_events = subsample_batch(batch, n_teacher_events)
+    orig_teacher_batch_size = len(batch)
+    teacher_events = subsample_batch(batch, n_teacher_events) # THIS CAN CHANGE THE BATCH SIZE!! 
 
     # Apply teacher augs here so they affect both teacher and student events
     if teacher_augs is not None:
@@ -111,8 +112,10 @@ def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_
 
         all_student_events.append(student_events)
     
-
     all_student_events = torch.cat(all_student_events, dim=0)
+    
+    assert all_student_events.shape[0] == n_student_reps * teacher_events.shape[0]
+    
     return teacher_events, all_student_events
 
 
@@ -137,18 +140,21 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
     koleo_loss_sum = 0
     report_freq = 10
     for i, batch in enumerate(loader):
+        actual_batch_size = len(batch)
         n_teacher_events = int(teacher_events_schedule.current_value())
         optimizer.zero_grad()
         logger.debug("Generating teacher and student samples")
         teacher_events, student_events = student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_reps, student_augs=student_augs)
         koleo_loss_weight = koleo_loss_schedule.current_value()
+        actual_batch_size = teacher_events.shape[0]
+
         with torch.amp.autocast(enabled=enable_autocast, device_type=device_type):
             # Augment the data and do a forward pass through both the student and teacher models    
             logger.debug("Running student")
             y_s  = student(student_events.to(DEVICE).float())
             logger.debug("Running teacher")
             y_t = teacher(teacher_events.to(DEVICE).float())
-            y_t = y_t.repeat(n_student_reps, 1, 1)
+            y_t = y_t.repeat(n_student_reps, 1)
 
             logger.debug("Computing loss")
             dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=0.2, t_temp=0.05)
@@ -179,10 +185,11 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
 
                 # We are interested in how similar two sets of events sampled from the same tube are compared to two sets of events from different tubes, when 
                 # run through the teacher model. 
-                s_events = student_events[0:len(batch), :, :]
-                t_events = teacher_events[0:len(batch), :, :]
+                s_events = student_events[0:actual_batch_size, :, :]
+                t_events = teacher_events[0:actual_batch_size, :, :]
                 y0 = teacher(s_events.to(DEVICE).float())
                 y1 = teacher(t_events.to(DEVICE).float())
+                assert y0.shape[0] == y1.shape[0], f"Whoa, didn't get same output size! s_events: {s_events.shape}, t_events: {t_events.shape}, orig student events: {student_events.shape}, orig teacher events: {teacher_events.shape}, batch: {len(batch)}"
                 self_cos_sim, other_cosim = teacher_student_cosine_similarity(y0, y1, emit=MASTER_PROCESS)
                 yt_self_loss_sum += self_cos_sim.item()
                 yt_other_loss_sum += other_cosim.item()
@@ -343,9 +350,9 @@ def train_dino(conf, run_name):
     koleo_schedule = LinearScheduler(conf['training']['koleo_loss_weight_start'], conf['training']['koleo_loss_weight_end'], conf['training']['koleo_loss_weight_steps'])
 
     student_augs = compose([
-        partial(scale, p=0.5, scale=0.1),
-        partial(shift, p=0.45, scale=0.1),
-        partial(noise, p=0.75, scale=0.2),
+        partial(scale, prob=0.5, scale=0.1),
+        partial(shift, prob=0.45, scale=0.1),
+        partial(noise, prob=0.75, scale=0.2),
     ])
 
     #logger.info(f"Proc: {os.getpid()} device: {device_id} w: {student.module.backbone.embedding[0].weight[0, :]}")
