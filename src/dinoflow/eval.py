@@ -63,6 +63,10 @@ class ClassificationModel(pl.LightningModule):
         self.precision = BinaryPrecision()
         self.recall = BinaryRecall()
         self.f1score = BinaryF1Score()
+        self.precision25 = BinaryPrecision()  
+        self.recall25 = BinaryRecall()
+        self.f1score25 = BinaryF1Score()
+
         self.training_loss_mean = MeanMetric()
         self.validation_loss_mean = MeanMetric()
 
@@ -79,12 +83,16 @@ class ClassificationModel(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, labels = batch
         preds = self(x).squeeze(-1)
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(preds, labels.float())
         preds = torch.nn.Sigmoid()(preds) # raw outputs are logits, non-sigmoid
         self.accuracy(preds, labels)
         self.precision(preds, labels)
         self.recall(preds, labels)
         self.f1score(preds, labels)
-        loss = torch.nn.functional.binary_cross_entropy_with_logits(preds, labels.float())
+        self.precision25(preds > 0.25, labels)
+        self.recall25(preds > 0.25, labels)
+        self.f1score25(preds > 0.25, labels)
+        
         self.validation_loss_mean.update(loss)
 
     def on_validation_epoch_end(self):
@@ -94,6 +102,9 @@ class ClassificationModel(pl.LightningModule):
         precision = self.precision.compute()
         recall = self.recall.compute()
         fscore = self.f1score.compute()
+        precision25 = self.precision25.compute()
+        recall25 = self.recall25.compute()
+        fscore25 = self.f1score25.compute()
 
         self.log('precision', precision, sync_dist=True )
         self.log('accuracy', accuracy, sync_dist=True)
@@ -101,7 +112,9 @@ class ClassificationModel(pl.LightningModule):
         self.log('fscore', fscore, sync_dist=True)
         self.log('val_loss', self.validation_loss_mean.compute(), sync_dist=True)
         self.log('training_loss', self.training_loss_mean.compute(), sync_dist=True)
-
+        self.log('precision25', precision25, sync_dist=True)
+        self.log('recall25', recall25, sync_dist=True)
+        self.log('fscore25', fscore25, sync_dist=True)
         self.log('learning_rate', lr)
     
         self.accuracy.reset()
