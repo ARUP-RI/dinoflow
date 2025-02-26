@@ -85,6 +85,8 @@ class ClassificationModel(pl.LightningModule):
         preds = self(x).squeeze(-1)
         loss = torch.nn.functional.binary_cross_entropy_with_logits(preds, labels.float())
         preds = torch.nn.Sigmoid()(preds) # raw outputs are logits, non-sigmoid
+        #for p, l in zip(preds, labels):
+        #    print(f"{p.item() :.4f}\t{l.item() :.2f}")
         self.accuracy(preds, labels)
         self.precision(preds, labels)
         self.recall(preds, labels)
