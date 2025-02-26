@@ -91,7 +91,7 @@ def dino_loss(ys, yt, C, s_temp=1, t_temp=0.5, eps=1e-8):
     return -1 * (tm * torch.log(sm + eps)).sum(dim=1).mean()
 
 
-def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_reps, student_augs=None, teacher_augs=None):
+def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_reps, student_augs=None, shared_augs=None, teacher_augs=None):
     """
     Sample n_teacher_events for each member of the batch, then from those events repeatedly sample n_student_events
     n_student_reps times 
@@ -100,9 +100,9 @@ def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_
     orig_teacher_batch_size = len(batch)
     teacher_events = subsample_batch(batch, n_teacher_events) # THIS CAN CHANGE THE BATCH SIZE!! 
 
-    # Apply teacher augs here so they affect both teacher and student events
-    if teacher_augs is not None:
-        teacher_events = teacher_augs(teacher_events)
+    # Apply shared augs here so they affect both teacher and student events
+    if shared_augs is not None:
+        teacher_events = shared_augs(teacher_events)
 
     all_student_events = []
     for i in range(n_student_reps):
@@ -112,6 +112,10 @@ def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_
 
         all_student_events.append(student_events)
     
+
+    if teacher_augs:
+        teacher_events = teacher_augs(teacher_events)
+
     all_student_events = torch.cat(all_student_events, dim=0)
     
     assert all_student_events.shape[0] == n_student_reps * teacher_events.shape[0]
@@ -119,7 +123,7 @@ def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_
     return teacher_events, all_student_events
 
 
-def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_student_events, n_student_reps, center_mo, teacher_mo_schedule, teacher_center, lr_schedule, koleo_loss_schedule, student_augs=None):
+def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_student_events, n_student_reps, center_mo, teacher_mo_schedule, teacher_center, lr_schedule, koleo_loss_schedule, student_augs=None, teacher_augs=None, shared_augs=None):
     """
     Conduct a single DINO epoch
     For each batch, augment the data and pass to the student and send un-augmented data to the teacher, the loss
@@ -144,7 +148,7 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
         n_teacher_events = int(teacher_events_schedule.current_value())
         optimizer.zero_grad()
         logger.debug("Generating teacher and student samples")
-        teacher_events, student_events = student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_reps, student_augs=student_augs)
+        teacher_events, student_events = student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_reps, student_augs=student_augs, teacher_augs=teacher_augs, shared_augs=shared_augs)
         koleo_loss_weight = koleo_loss_schedule.current_value()
         actual_batch_size = teacher_events.shape[0]
 
@@ -349,6 +353,10 @@ def train_dino(conf, run_name):
 
     koleo_schedule = LinearScheduler(conf['training']['koleo_loss_weight_start'], conf['training']['koleo_loss_weight_end'], conf['training']['koleo_loss_weight_steps'])
 
+    shared_augs = compose([
+        partial(standardize_range, means=feat_means, stds=feat_stds)
+    ])
+
     student_augs = compose([
         partial(scale, prob=0.5, scale=0.1),
         partial(shift, prob=0.45, scale=0.1),
@@ -367,7 +375,9 @@ def train_dino(conf, run_name):
                    teacher_center=teacher_center,
                    lr_schedule=lrschedule,
                    koleo_loss_schedule=koleo_schedule,
-                   student_augs=student_augs)
+                   student_augs=student_augs,
+                   shared_augs=shared_augs,
+                   teacher_augs=None)
         teacher_center = epoch_results['teacher_center']
         cosine_sim = epoch_results['cosine_sim']
         logger.info(f"Epoch #{epoch} LR: {lrschedule.get_lr()[0] :.5f} Loss: {epoch_results['epoch_loss'] :.4f}  cos. sim: {epoch_results['cosine_sim'] :.4f} self_cosim_mean: {epoch_results['self_cosim_mean'] :.4f} other_cosim_mean: {epoch_results['other_cosim_mean'] :.4f}")

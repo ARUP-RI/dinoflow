@@ -9,8 +9,8 @@ model:
   model_dim: 512
   layers: 10
   heads: 4
-  projection_dim: 256
-  hidden_dim: 256
+  projection_dim: 1024
+  hidden_dim: 512
 
 
 training:
@@ -34,8 +34,8 @@ training:
   koleo_loss_weight_end: 0.0005
   koleo_loss_weight_steps: 50000
 
-  n_student_events: 1024
-  n_
+  n_student_events: 512
+  n_student_reps: 2
 
 
 
