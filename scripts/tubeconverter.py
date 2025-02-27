@@ -38,23 +38,25 @@ def convert_tubes(tube, tubekeys=('b', 'm', 't')):
 
     return tube_dat
 
-def process_tube(tube):
+def process_tube(tube, destdir="."):
+    torch.set_num_threads(4)
     try:
         logger.info(f"Converting {tube}")
         result = convert_tubes(tube)
         parentdir = os.path.dirname(tube)
-        newname = os.path.join(parentdir, os.path.basename(tube).replace("_raw", "").replace('.pt', '_converted.pt'))   
-        torch.save(result, newname)
+        newname = os.path.basename(tube).replace("_raw", "").replace('.pt', '_converted.pt')
+        torch.save(result, os.path.join(destdir, newname))
         logger.info(f"Saved {newname}")
     except Exception as e:
         logger.error(f"Error converting {tube}: {e}")
         raise e
 
-def main(tubedir, workers=16):
+def main(tubedir, workers=4):
     # process_tube("/Users/brendan.ofallon/data/flow/muir_raw_tubedata/19217129080_raw.pt")
     paths = glob.glob(os.path.join(tubedir, '*.pt'))
+    logger.info(f"Found {len(paths)} files to convert")
     with ProcessPoolExecutor(max_workers=workers) as executor:
-        executor.map(process_tube, paths, chunksize=4)
+        executor.map(process_tube, paths, chunksize=512)
 
 
 if __name__ == "__main__":

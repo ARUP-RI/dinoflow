@@ -1,6 +1,6 @@
 
 data:
-  data_dir: /data3/flow/combined_noflt
+  data_dir: /data2/brendan/flow/converted_flowtubes
   input_events: 8192
 
 
@@ -32,7 +32,7 @@ training:
 
   koleo_loss_weight_start: 0.005
   koleo_loss_weight_end: 0.0001
-  koleo_loss_weight_steps: 50000
+  koleo_loss_weight_steps: 15000
 
   n_student_events: 512
   n_student_reps: 2

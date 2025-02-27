@@ -286,7 +286,7 @@ class NoLabelTubes(Dataset):
     
     def __getitem__(self, i):
         try:
-            item = torch.load(self.samples[i], weights_only=True)
+            item = torch.load(self.samples[i], weights_only=False)
             if item[self.return_key].shape[0] > self.min_events:
                 idx = torch.randperm(item[self.return_key].shape[0])[0:self.min_events]
                 return item[self.return_key][idx]
@@ -316,7 +316,7 @@ class TubeData(Dataset):
         row = self.data.iloc[i]
         tubes = {}
         for tube in self.tubes_to_return:
-            tubedata = torch.load(self.dataroot / row['path'], weights_only=True)
+            tubedata = torch.load(self.dataroot / row['path'], weights_only=False)
             if self.events_to_return != -1:
                 tubes[tube] = subsample_events(tubedata[tube], self.events_to_return)
             else:
