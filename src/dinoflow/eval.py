@@ -1,8 +1,9 @@
 
 import logging
+from functools import partial
 
 import typer
-
+import yaml
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,7 +16,7 @@ import numpy as np
 
 
 from dinoflow.models import TubeEncoder, TubeEncoderWithProjection
-from dinoflow.data import TubeData, collate_fn
+from dinoflow.data import TubeData, collate_fn, compose, shift, scale, noise, standardize_range
 from dinoflow import util
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import CometLogger
@@ -141,9 +142,18 @@ def load_checkpoint(path):
     teacher.load_state_dict(ckpt['teacher'])
     return teacher.tube_encoder
 
+def load_featmeans_stds(conf, tube_type):
+    if tube_type == 't':
+        return conf['normalization_params']['t_feat_means'], conf['normalization_params']['t_feat_stds']
+    elif tube_type == 'm':
+        return conf['normalization_params']['m_feat_means'], conf['normalization_params']['m_feat_stds']
+    elif tube_type == 'b':
+        return conf['normalization_params']['b_feat_means'], conf['normalization_params']['b_feat_stds']
+    else:
+        raise ValueError(f"Unknown tube type: {tube_type}")
 
 @app.command()
-def train(run_name, train_labels, test_labels, backbone: str, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25) :
+def train(run_name, train_labels, test_labels, backbone: str, conf: str, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, tube_type: str = "m") :
     """
     Evaluate the model on the test set
     """
@@ -152,6 +162,10 @@ def train(run_name, train_labels, test_labels, backbone: str, labelkey: str = "l
     classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
     model = ClassificationModel(backbone, classifier)
 
+    with open(conf, 'r') as f:
+        conf = yaml.safe_load(f)
+
+    feat_means, feat_stds = load_featmeans_stds(conf, tube_type)
     if checkpoint is not None:
         logger.info(f"Loading full model checkpoint from {checkpoint}")
         model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier)    
@@ -166,18 +180,26 @@ def train(run_name, train_labels, test_labels, backbone: str, labelkey: str = "l
         backbone.train()
 
     torch.set_float32_matmul_precision('medium')
+
+    transforms = compose([
+        partial(standardize_range, means=feat_means, stds=feat_stds),
+        partial(shift, scale=0.2),
+        partial(scale, scale=0.2),
+        partial(noise, scale=0.25),
+    ])
     
-    traindata = TubeData(train_labels, tubes_to_return=["m"], events_to_return=int(events), labelkey=labelkey)
+    traindata = TubeData(train_labels, tubes_to_return=[tube_type], events_to_return=int(events), labelkey=labelkey, transforms=transforms)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
     logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
     logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
 
-    valdata = TubeData(test_labels, tubes_to_return=["m"], events_to_return=int(events), labelkey=labelkey)
+    valdata = TubeData(test_labels, tubes_to_return=[tube_type], events_to_return=int(events), labelkey=labelkey, transforms=transforms)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
     logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
     logger.info(f"Negative samples: {len(valdata.positive_negative_samples()[1])}")
+
 
     comet_logger = CometLogger(
             workspace="brendan",  # Optional
