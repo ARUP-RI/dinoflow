@@ -143,7 +143,7 @@ def load_checkpoint(path):
 
 
 @app.command()
-def train(run_name, train_labels, test_labels, backbone: str, checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25) :
+def train(run_name, train_labels, test_labels, backbone: str, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25) :
     """
     Evaluate the model on the test set
     """
@@ -167,13 +167,17 @@ def train(run_name, train_labels, test_labels, backbone: str, checkpoint: str = 
 
     torch.set_float32_matmul_precision('medium')
     
-    traindata = TubeData(train_labels, tubes_to_return=["m"], events_to_return=int(events))
+    traindata = TubeData(train_labels, tubes_to_return=["m"], events_to_return=int(events), labelkey=labelkey)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
+    logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
+    logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
 
-    valdata = TubeData(test_labels, tubes_to_return=["m"], events_to_return=int(events))
+    valdata = TubeData(test_labels, tubes_to_return=["m"], events_to_return=int(events), labelkey=labelkey)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
+    logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
+    logger.info(f"Negative samples: {len(valdata.positive_negative_samples()[1])}")
 
     comet_logger = CometLogger(
             workspace="brendan",  # Optional
@@ -186,7 +190,7 @@ def train(run_name, train_labels, test_labels, backbone: str, checkpoint: str = 
                         accelerator='auto',
                         precision="bf16-mixed",
                         callbacks=[
-                            ModelCheckpoint(monitor='fscore', mode='max', save_top_k=1, save_last=True, filename=run_name + "_e{epoch}"),
+                            ModelCheckpoint(dirpath=f"dinoflow_eval_{run_name}", monitor='fscore', mode='max', save_top_k=1, save_last=True, filename=run_name + "_e{epoch}"),
                             LearningRateMonitor(logging_interval='step'),
                         ],
                         logger=comet_logger)

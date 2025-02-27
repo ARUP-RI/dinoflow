@@ -16,8 +16,8 @@ dependencies = [
     "pyyaml>=6.0.2",
     "torch>=2.6.0",
     "torchmetrics>=1.6.1",
-    "typer>=0.15.1",
-    "umap>=0.1.1",
+    "typer",
+    "umap-learn",
 ]
 
 [project.scripts]

@@ -294,16 +294,20 @@ class NoLabelTubes(Dataset):
                 return item[self.return_key]
         except Exception as ex:
             raise Exception(f"Failed to load item {self.samples[i]}: {str(ex)}")
+    
+    def get_path(self, i):
+        return self.samples[i]
         
 
 
 class TubeData(Dataset):
 
-    def __init__(self, labelcsv, events_to_return=-1, data_root="/", tubes_to_return=["b", "t", "m"]):
+    def __init__(self, labelcsv, events_to_return=-1, data_root="/", tubes_to_return=["b", "t", "m"], labelkey="label"):
         self.data = pd.read_csv(labelcsv)
         self.tubes_to_return = tubes_to_return
         self.dataroot = Path(data_root)
         self.events_to_return = events_to_return
+        self.labelkey = labelkey
 
     def __len__(self):
         return len(self.data)
@@ -322,7 +326,7 @@ class TubeData(Dataset):
             tubes = tubes[self.tubes_to_return[0]]
          
         # For now....
-        label = row['label']
+        label = row[self.labelkey]
         if label:
             label = 1.0
         else:
@@ -333,6 +337,11 @@ class TubeData(Dataset):
     def get_row_data(self, i):
         row = self.data.iloc[i]
         return row.to_dict()
+    
+    def positive_negative_samples(self):
+        pos = self.data[self.data[self.labelkey] == 1]
+        neg = self.data[self.data[self.labelkey] == 0]
+        return pos, neg
 
 
 def collate_fn(items):
