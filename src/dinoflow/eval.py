@@ -182,9 +182,9 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, labelke
     torch.set_float32_matmul_precision('medium')
 
     transforms = compose([
-        partial(standardize_range, means=feat_means, stds=feat_stds),
         partial(shift, scale=0.2),
         partial(scale, scale=0.2),
+        partial(standardize_range, means=feat_means, stds=feat_stds),
         partial(noise, scale=0.25),
     ])
     

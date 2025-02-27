@@ -7,7 +7,7 @@ def main(label_file, min_events, tube='m'):
         reader = csv.DictReader(f)
         print(reader.fieldnames)
         for row in reader:
-            tubedata = torch.load(row['path'], weights_only=True)
+            tubedata = torch.load(row['path'], weights_only=False)
             if tubedata[tube].shape[0] >= min_events:
                 print(",".join(row[k] for k in reader.fieldnames))
             else:
