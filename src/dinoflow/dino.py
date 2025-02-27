@@ -198,7 +198,7 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
                 yt_self_loss_sum += self_cos_sim.item()
                 yt_other_loss_sum += other_cosim.item()
 
-                logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} CS loss: {cos_sim_loss_val.item()  :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cosim: {self_cos_sim.item() :.4f} other_cosim: {other_cosim.item() :.4f} teacher mo: {param_mo :.4f} teacher events: {n_teacher_events}")
+                logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} CS loss: {cos_sim_loss_val.item()  :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cosim: {self_cos_sim.item() :.4f} other_cosim: {other_cosim.item() :.4f} teacher mo: {param_mo :.4f} teacher events: {n_teacher_events} kl weight: {koleo_loss_weight :.5f}")
                 
 
         teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
