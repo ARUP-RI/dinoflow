@@ -190,7 +190,7 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
     logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
     logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
 
-    valdata = TubeData(test_labels, tubes_to_return=[tube_type], events_to_return=int(events), data_root=dataroot, labelkey=labelkey, val_transforms=val_transforms)
+    valdata = TubeData(test_labels, tubes_to_return=[tube_type], events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=val_transforms)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
     logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
