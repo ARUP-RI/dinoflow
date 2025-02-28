@@ -353,9 +353,10 @@ def train_dino(conf, run_name):
 
     koleo_schedule = LinearScheduler(conf['training']['koleo_loss_weight_start'], conf['training']['koleo_loss_weight_end'], conf['training']['koleo_loss_weight_steps'])
 
-    shared_augs = compose([
-        partial(standardize_range, means=feat_means, stds=feat_stds)
-    ])
+    shared_augs = None
+    #shared_augs = compose([
+    #    partial(standardize_range, means=feat_means, stds=feat_stds)
+    #])
 
     student_augs = compose([
         partial(scale, prob=0.5, scale=0.1),
@@ -391,6 +392,7 @@ def train_dino(conf, run_name):
             experiment.log_metric("koleo_loss", epoch_results['koleo_loss'], epoch=epoch)
             experiment.log_metric("teacher_mo", teacher_mo_schedule.current_value(), epoch=epoch)
             experiment.log_metric("teacher_events_schedule", teacher_events_schedule.current_value(), epoch=epoch)
+            experiment.log_metric("koleo_loss_weight", koleo_schedule.current_value(), epoch=epoch)
 
         if (epoch % checkpoint_freq == 0 or epoch == (conf['training']['epochs'] - 1)) and MASTER_PROCESS:
             if isinstance(student, DDP):
