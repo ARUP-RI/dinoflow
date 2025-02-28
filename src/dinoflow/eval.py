@@ -79,7 +79,6 @@ class ClassificationModel(pl.LightningModule):
     
     def training_step(self, batch, batch_idx):
         x, rowinfo = batch
-        print(rowinfo)
         labels = rowinfo['label']
         preds = self(x)
         loss = torch.nn.functional.binary_cross_entropy_with_logits(preds.squeeze(1), labels.float())
@@ -186,7 +185,7 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
     logger.info(f"Loading backbone from {backbone}")
     backbone = load_checkpoint(backbone)
     classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
-    model = ClassificationModel(backbone, classifier)
+    model = ClassificationModel(backbone, classifier, emit_predictions=True)
 
     with open(conf, 'r') as f:
         conf = yaml.safe_load(f)
@@ -230,20 +229,23 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
     ])
     
     traindata = TubeData(train_labels, tubes_to_return=[tube_type], events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=train_transforms)
-    trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)
+    trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=8)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
     logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
     logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
+    assert len(traindata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
     precomputed_train = PrecomputedBackbone(backbone, traindata)
     trainloader = DataLoader(precomputed_train, batch_size=batch_size, shuffle=True, num_workers=16)    
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
 
 
     valdata = TubeData(test_labels, tubes_to_return=[tube_type], events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=val_transforms)
-    valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=16)
+    valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=8)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
     logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
     logger.info(f"Negative samples: {len(valdata.positive_negative_samples()[1])}")
+    assert len(valdata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
+
     precomputed_val = PrecomputedBackbone(backbone, valdata)
     valloader = DataLoader(precomputed_val, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
