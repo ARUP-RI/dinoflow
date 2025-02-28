@@ -143,7 +143,8 @@ class PrecomputedBackbone(Dataset):
     def __init__(self, backbone_model, dataset):
         self.model = backbone_model
         self.dataset = dataset
-        self.precomputed_results = self._precompute_all()
+        # self.precomputed_results = self._precompute_all()
+        self.cached_results = [None] * len(dataset)
 
     def _precompute_all(self, batch_size=32):
         results = []
@@ -153,17 +154,30 @@ class PrecomputedBackbone(Dataset):
             x, rowinfo = self.dataset[i]
             batch.append(x)
             if len(batch) == batch_size:
-                results.append(self.model(torch.cat(batch, dim=0).float()))
+                results.append(self.model(torch.stack(batch, dim=0).float()))
                 batch = []
         if len(batch) > 0:
-            results.append(self.model(torch.cat(batch, dim=0).float()))
+            results.append(self.model(torch.stack(batch, dim=0).float()))
         return torch.cat(results, dim=0)
 
     def __getitem__(self, i):
-        return self.precomputed_results[i, :, :]
+        if isinstance(int, i):
+            result = self.cached_results[i]
+            if result is None:
+                result = self.model(self.dataset[i][0].float())
+                self.cached_results[i] = result.cpu()
+        else:
+            idx_to_compute = [idx for idx in i if self.cached_results[idx] is None]
+            logger.info(f"Computing {len(idx_to_compute)} embeddings")
+            if len(idx_to_compute) > 0:
+                results = self.model(torch.stack([self.dataset[idx][0].float() for idx in idx_to_compute], dim=0))
+                for idx, result in zip(idx_to_compute, results):
+                    self.cached_results[idx] = result.cpu()
+
+        return self.cached_results[i]
     
     def __len__(self):
-        return len(self.precomputed_results)
+        return len(self.dataset)
 
 
 def load_featmeans_stds(conf, tube_type):
