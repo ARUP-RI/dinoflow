@@ -178,7 +178,7 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
     Evaluate the model on the test set
     """
     logger.info(f"Loading backbone from {backbone}")
-    backbone = load_checkpoint(backbone, device=DEVICE)
+    backbone = load_checkpoint(backbone)
     classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
     model = ClassificationModel(backbone, classifier)
 
@@ -223,7 +223,9 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
     val_transforms = compose([
     ])
     
-    traindata = TubeData(train_labels, tubes_to_return=[tube_type], events_to_return=int(events), dataroot=dataroot, labelkey=labelkey, transforms=train_transforms)
+    traindata = TubeData(train_labels, tubes_to_return=[tube_type], events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=train_transforms)
+    trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)
+    logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
     logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
     logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
     precomputed_train = PrecomputedBackbone(backbone, traindata)
@@ -231,13 +233,14 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
 
 
-    valdata = TubeData(test_labels, tubes_to_return=[tube_type], events_to_return=int(events), dataroot=dataroot, labelkey=labelkey, val_transforms=val_transforms)
+    valdata = TubeData(test_labels, tubes_to_return=[tube_type], events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=val_transforms)
+    valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=16)
+    logger.info(f"Loaded {len(valloader.dataset)} samples for val")
     logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
     logger.info(f"Negative samples: {len(valdata.positive_negative_samples()[1])}")
     precomputed_val = PrecomputedBackbone(backbone, valdata)
     valloader = DataLoader(precomputed_val, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
-
 
     comet_logger = CometLogger(
             workspace="brendan",  # Optional
