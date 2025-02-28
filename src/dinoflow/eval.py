@@ -166,6 +166,9 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, labelke
         conf = yaml.safe_load(f)
 
     feat_means, feat_stds = load_featmeans_stds(conf, tube_type)
+    feat_means = torch.tensor(feat_means).to(model.device)
+    feat_stds = torch.tensor(feat_stds).to(model.device)
+
     if checkpoint is not None:
         logger.info(f"Loading full model checkpoint from {checkpoint}")
         model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier)    
@@ -182,10 +185,10 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, labelke
     torch.set_float32_matmul_precision('medium')
 
     transforms = compose([
-        partial(shift, scale=0.2),
-        partial(scale, scale=0.2),
+        #partial(shift, scale=0.2),
+        #partial(scale, scale=0.2),
         partial(standardize_range, means=feat_means, stds=feat_stds),
-        partial(noise, scale=0.25),
+        #partial(noise, scale=0.25),
     ])
     
     traindata = TubeData(train_labels, tubes_to_return=[tube_type], events_to_return=int(events), labelkey=labelkey, transforms=transforms)
