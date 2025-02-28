@@ -181,20 +181,24 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, labelke
 
     torch.set_float32_matmul_precision('medium')
 
-    transforms = compose([
+    train_transforms = compose([
         partial(shift, scale=0.2),
         partial(scale, scale=0.2),
         partial(standardize_range, means=feat_means, stds=feat_stds),
         partial(noise, scale=0.25),
     ])
+
+    val_transforms = compose([
+        partial(standardize_range, means=feat_means, stds=feat_stds),
+    ])
     
-    traindata = TubeData(train_labels, tubes_to_return=[tube_type], events_to_return=int(events), labelkey=labelkey, transforms=transforms)
+    traindata = TubeData(train_labels, tubes_to_return=[tube_type], events_to_return=int(events), labelkey=labelkey, transforms=train_transforms)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
     logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
     logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
 
-    valdata = TubeData(test_labels, tubes_to_return=[tube_type], events_to_return=int(events), labelkey=labelkey, transforms=transforms)
+    valdata = TubeData(test_labels, tubes_to_return=[tube_type], events_to_return=int(events), labelkey=labelkey, transforms=val_transforms)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
     logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
