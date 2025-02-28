@@ -150,7 +150,7 @@ class PrecomputedBackbone(Dataset):
         logger.info(f"Precomputing {len(self.dataset)} embeddings")
         for i in range(len(self.dataset)):
             x, rowinfo = self.dataset[i]
-            results.append(self.model(x))
+            results.append(self.model(x.float()))
         return results
 
     def __getitem__(self, i):
