@@ -341,7 +341,10 @@ class NoLabelTubes(Dataset):
 class TubeData(Dataset):
 
     def __init__(self, labelcsv, events_to_return=-1, data_root="/", tubes_to_return=["b", "t", "m"], labelkey="label", transforms=None):
-        self.data = pd.read_csv(labelcsv)
+        if isinstance(labelcsv, str):
+            self.data = pd.read_csv(labelcsv)
+        else:
+            self.data = labelcsv
         self.tubes_to_return = tubes_to_return
         self.dataroot = Path(data_root)
         self.events_to_return = events_to_return
@@ -375,7 +378,9 @@ class TubeData(Dataset):
         else:
             label = 0.0
 
-        return tubes, label
+        rowdict = row.to_dict()
+        rowdict['label'] = label
+        return tubes, rowdict
     
     def get_row_data(self, i):
         row = self.data.iloc[i]
