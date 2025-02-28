@@ -11,16 +11,17 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 from torchmetrics.classification import BinaryPrecisionRecallCurve, BinaryF1Score, BinaryRecall, BinaryPrecision, BinaryAccuracy
 from torchmetrics.aggregation import MeanMetric, SumMetric
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.loggers import CometLogger
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 import numpy as np
 
 
 from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint
 from dinoflow.data import TubeData, collate_fn, compose, shift, scale, noise, standardize_range
 from dinoflow import util
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
-from pytorch_lightning.loggers import CometLogger
+
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -138,6 +139,26 @@ class ClassificationModel(pl.LightningModule):
         return [optimizer], [lrschedule]
 
 
+class PrecomputedBackbone(Dataset):
+    def __init__(self, backbone_model, dataset):
+        self.model = backbone_model
+        self.dataset = dataset
+        self.precomputed_results = self._precompute_all()
+
+    def _precompute_all(self):
+        results = []
+        logger.info(f"Precomputing {len(self.dataset)} embeddings")
+        for i in range(len(self.dataset)):
+            x, rowinfo = self.dataset[i]
+            results.append(self.model(x))
+        return results
+
+    def __getitem__(self, i):
+        return self.precomputed_results[i]
+    
+    def __len__(self):
+        return len(self.precomputed_results)
+
 
 def load_featmeans_stds(conf, tube_type):
     if tube_type == 't':
@@ -207,6 +228,10 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
     logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
     logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
     assert len(traindata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
+    precomputed_train = PrecomputedBackbone(backbone, traindata)
+    trainloader = DataLoader(precomputed_train, batch_size=batch_size, shuffle=True, num_workers=16)    
+    logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
+
 
     valdata = TubeData(test_labels, tubes_to_return=[tube_type], events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=val_transforms)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=8)
@@ -215,6 +240,9 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
     logger.info(f"Negative samples: {len(valdata.positive_negative_samples()[1])}")
     assert len(valdata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
 
+    precomputed_val = PrecomputedBackbone(backbone, valdata)
+    valloader = DataLoader(precomputed_val, batch_size=batch_size, shuffle=False, num_workers=16)
+    logger.info(f"Loaded {len(valloader.dataset)} samples for val")
 
     comet_logger = CometLogger(
             workspace="brendan",  # Optional
