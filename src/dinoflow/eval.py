@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 
 
-from dinoflow.models import TubeEncoder, TubeEncoderWithProjection
+from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint
 from dinoflow.data import TubeData, collate_fn, compose, shift, scale, noise, standardize_range
 from dinoflow import util
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
@@ -131,16 +131,6 @@ class ClassificationModel(pl.LightningModule):
         return [optimizer], [lrschedule]
 
 
-def load_checkpoint(path):
-    """
-    Load a checkpoint from a file and return the tube encoder from the teacher
-    """
-    ckpt = torch.load(path, weights_only=False, map_location=DEVICE)
-    modelconf = ckpt['modelconf']    
-    teacher = TubeEncoderWithProjection(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads'], hidden_dim=modelconf['hidden_dim'], projection_dim=modelconf['projection_dim']).to(DEVICE)
-
-    teacher.load_state_dict(ckpt['teacher'])
-    return teacher.tube_encoder
 
 def load_featmeans_stds(conf, tube_type):
     if tube_type == 't':
@@ -152,13 +142,14 @@ def load_featmeans_stds(conf, tube_type):
     else:
         raise ValueError(f"Unknown tube type: {tube_type}")
 
+
 @app.command()
-def train(run_name, train_labels, test_labels, backbone: str, conf: str, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, tube_type: str = "m") :
+def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroot: str = "/", labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, tube_type: str = "m") :
     """
     Evaluate the model on the test set
     """
     logger.info(f"Loading backbone from {backbone}")
-    backbone = load_checkpoint(backbone)
+    backbone = load_checkpoint(backbone, device=DEVICE)
     classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
     model = ClassificationModel(backbone, classifier)
 
@@ -182,23 +173,21 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, labelke
     torch.set_float32_matmul_precision('medium')
 
     train_transforms = compose([
-        partial(shift, scale=0.2),
-        partial(scale, scale=0.2),
-        partial(standardize_range, means=feat_means, stds=feat_stds),
+        partial(shift, scale=0.1),
+        partial(scale, scale=0.1),
         partial(noise, scale=0.25),
     ])
 
     val_transforms = compose([
-        partial(standardize_range, means=feat_means, stds=feat_stds),
     ])
     
-    traindata = TubeData(train_labels, tubes_to_return=[tube_type], events_to_return=int(events), labelkey=labelkey, transforms=train_transforms)
+    traindata = TubeData(train_labels, tubes_to_return=[tube_type], events_to_return=int(events), dataroot=dataroot, labelkey=labelkey, transforms=train_transforms)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
     logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
     logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
 
-    valdata = TubeData(test_labels, tubes_to_return=[tube_type], events_to_return=int(events), labelkey=labelkey, transforms=val_transforms)
+    valdata = TubeData(test_labels, tubes_to_return=[tube_type], events_to_return=int(events), dataroot=dataroot, labelkey=labelkey, val_transforms=val_transforms)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
     logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")

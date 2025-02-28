@@ -4,6 +4,17 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 
+def load_checkpoint(path, device=None):
+    """
+    Load a checkpoint from a file and return the tube encoder from the teacher
+    """
+    ckpt = torch.load(path, weights_only=False, map_location=device)
+    modelconf = ckpt['modelconf']    
+    teacher = TubeEncoderWithProjection(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads'], hidden_dim=modelconf['hidden_dim'], projection_dim=modelconf['projection_dim']).to(DEVICE)
+
+    teacher.load_state_dict(ckpt['teacher'])
+    return teacher.tube_encoder
+
 class TubeEncoder(nn.Module):
     
     def __init__(self, num_features, model_embed_dim, layers, heads):
