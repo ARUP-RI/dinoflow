@@ -10,8 +10,7 @@ def load_checkpoint(path, device=None):
     """
     ckpt = torch.load(path, weights_only=False, map_location=device)
     modelconf = ckpt['modelconf']    
-    teacher = TubeEncoderWithProjection(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads'], hidden_dim=modelconf['hidden_dim'], projection_dim=modelconf['projection_dim']).to(DEVICE)
-
+    teacher = TubeEncoderWithProjection(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads'], hidden_dim=modelconf['hidden_dim'], projection_dim=modelconf['projection_dim']).to(device)
     teacher.load_state_dict(ckpt['teacher'])
     return teacher.tube_encoder
 
