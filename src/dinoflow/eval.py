@@ -4,6 +4,7 @@ from functools import partial
 
 import typer
 import yaml
+from tqdm import tqdm
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -143,21 +144,27 @@ class PrecomputedBackbone(Dataset):
     def __init__(self, backbone_model, dataset):
         self.model = backbone_model
         self.dataset = dataset
-        # self.precomputed_results = self._precompute_all()
         self.cached_results = [None] * len(dataset)
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"Using device {self.device} for backbone precompute")
+        self.model.to(self.device)
+        # self.precomputed_results = self._precompute_all()
 
-    def _precompute_all(self, batch_size=32):
+    @torch.inference_mode()
+    def _precompute_all(self, batch_size=384):
         results = []
         logger.info(f"Precomputing {len(self.dataset)} embeddings")
         batch = []
-        for i in range(len(self.dataset)):
+        for i in tqdm(range(len(self.dataset))):
             x, rowinfo = self.dataset[i]
             batch.append(x)
             if len(batch) == batch_size:
-                results.append(self.model(torch.stack(batch, dim=0).float()))
+                embeddings = self.model(torch.stack(batch, dim=0).to(self.device).float())
+                results.append(embeddings.cpu())
                 batch = []
         if len(batch) > 0:
-            results.append(self.model(torch.stack(batch, dim=0).float()))
+            embeddings = self.model(torch.stack(batch, dim=0).to(self.device).float())
+            results.append(embeddings.cpu())
         return torch.cat(results, dim=0)
 
     def __getitem__(self, i):
