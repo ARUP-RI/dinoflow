@@ -4,6 +4,7 @@ from functools import partial
 
 import typer
 import yaml
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -53,7 +54,7 @@ class CombinedModel(nn.Module):
 
 
 class ClassificationModel(pl.LightningModule):
-    def __init__(self, backbone, classifier, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250):
+    def __init__(self, backbone, classifier, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False):
         super().__init__()
         self.model = CombinedModel(backbone, classifier)
         self.min_lr = min_lr
@@ -70,24 +71,31 @@ class ClassificationModel(pl.LightningModule):
 
         self.training_loss_mean = MeanMetric()
         self.validation_loss_mean = MeanMetric()
+        self.emit_predictions = emit_predictions
 
     def forward(self, x):
         return self.model(x)
     
     def training_step(self, batch, batch_idx):
-        x, labels = batch
+        x, rowinfo = batch
+        print(rowinfo)
+        labels = rowinfo['label']
         preds = self(x)
         loss = torch.nn.functional.binary_cross_entropy_with_logits(preds.squeeze(1), labels.float())
         self.training_loss_mean.update(loss)
         return loss
     
     def validation_step(self, batch, batch_idx):
-        x, labels = batch
+        x, rowinfo = batch
+        labels = rowinfo['label']
+        accs = rowinfo['ACCESSION']
         preds = self(x).squeeze(-1)
         loss = torch.nn.functional.binary_cross_entropy_with_logits(preds, labels.float())
         preds = torch.nn.Sigmoid()(preds) # raw outputs are logits, non-sigmoid
-        #for p, l in zip(preds, labels):
-        #    print(f"{p.item() :.4f}\t{l.item() :.2f}")
+        if self.emit_predictions:
+            for p, l, a in zip(preds, labels, accs):
+                if l == 1 or p.item() > 0.5:
+                    print(f"{a}\t{p.item() :.4f}\t{l.item() :.2f}")
         self.accuracy(preds, labels)
         self.precision(preds, labels)
         self.recall(preds, labels)
@@ -144,7 +152,7 @@ def load_featmeans_stds(conf, tube_type):
 
 
 @app.command()
-def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroot: str = "/", labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, tube_type: str = "m") :
+def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroot: str = "/", positive_repeat_factor: int = 1, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, tube_type: str = "m") :
     """
     Evaluate the model on the test set
     """
@@ -174,6 +182,16 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
         backbone.train()
 
     torch.set_float32_matmul_precision('medium')
+
+    # Repeat rows in positive samples to balance the dataset
+    if positive_repeat_factor > 1:
+        train_labels = pd.read_csv(train_labels)
+        positive_rows = train_labels[train_labels[labelkey] == 1]
+        logger.info(f"Positive samples: {len(positive_rows)}")
+        new_rows =  pd.concat([positive_rows] * positive_repeat_factor, ignore_index=True)
+        # Concatenate the repeated rows back to the original DataFrame
+        train_labels = pd.concat([train_labels, new_rows], ignore_index=True)
+        logger.info(f"New positive samples: {len(train_labels[train_labels[labelkey] == 1])}")
 
     train_transforms = compose([
         partial(shift, scale=0.1),
@@ -236,7 +254,7 @@ def predict(checkpoint, test_labels, events: int = 4096, batch_size: int = 16):
                                         layers=backbone_conf['layers'],
                                         heads=backbone_conf['heads']).to(DEVICE)
     classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
-    model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier)  
+    model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier, emit_predictions=True)  
     model.eval()
     testdata = TubeData(test_labels, tubes_to_return=["m"], events_to_return=int(events))
     testloader = DataLoader(testdata, batch_size=batch_size, shuffle=False, num_workers=16)
