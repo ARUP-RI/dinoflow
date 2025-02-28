@@ -146,16 +146,22 @@ class PrecomputedBackbone(Dataset):
         self.dataset = dataset
         self.precomputed_results = self._precompute_all()
 
-    def _precompute_all(self):
+    def _precompute_all(self, batch_size=32):
         results = []
         logger.info(f"Precomputing {len(self.dataset)} embeddings")
+        batch = []
         for i in range(len(self.dataset)):
             x, rowinfo = self.dataset[i]
-            results.append(self.model(x))
-        return results
+            batch.append(x)
+            if len(batch) == batch_size:
+                results.append(self.model(torch.cat(batch, dim=0).float()))
+                batch = []
+        if len(batch) > 0:
+            results.append(self.model(torch.cat(batch, dim=0).float()))
+        return torch.cat(results, dim=0)
 
     def __getitem__(self, i):
-        return self.precomputed_results[i]
+        return self.precomputed_results[i, :, :]
     
     def __len__(self):
         return len(self.precomputed_results)
