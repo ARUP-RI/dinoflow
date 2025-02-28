@@ -92,43 +92,81 @@ def subsample_batch(x: List[torch.Tensor], num_events: int):
 
 
 def scale(x, device='cpu', prob=0.5, scale=0.1):
-    """ Multiply all events in a channel by the same amount, scaling them all to be a bit bigger or smaller """
-    r = torch.rand(x.shape[0])
-    for i in range(x.shape[0]):
-        if r[i] < prob:
+    """ 
+    Multiply all events in a channel by the same amount, scaling them all to be a bit bigger or smaller 
+    If x has 3 dimensions, we scale each batch element separately
+    If x has 2 dimensions, we scale the whole tensor
+    Modifies in place! Use clone if you need the original tensor unmodified
+    """
+    if len(x.shape) == 3:
+        r = torch.rand(x.shape[0])
+        for i in range(x.shape[0]):
+            if r[i] < prob:
+                z = torch.normal(mean=torch.tensor([1.0 for _ in range(x.shape[-1])]),
+                        std=torch.tensor([scale for _ in range(x.shape[-1])])).to(device)
+                z = torch.clamp(z, min=1.0 - 2*scale, max=1.0 + 2*scale)
+                x[i, :, :] = x[i, :, :] * z
+    elif len(x.shape) == 2:
+        r = torch.rand(1)
+        if r < prob:
             z = torch.normal(mean=torch.tensor([1.0 for _ in range(x.shape[-1])]),
-                             std=torch.tensor([scale for _ in range(x.shape[-1])])).to(device)
+                        std=torch.tensor([scale for _ in range(x.shape[-1])])).to(device)
             z = torch.clamp(z, min=1.0 - 2*scale, max=1.0 + 2*scale)
-            x[i, :, :] = x[i, :, :] * z
-
+            x = x * z
+    else:
+        raise ValueError(f"Input tensor must have 2 or 3 dimensions (found {len(x.shape)})")
     return x
+
 
 def shift(x, device='cpu', prob=0.5, scale=0.1):
     """
     Add / subtract a constant value to all events in each channel, 'shifts' all channel values up or down a bit
+    If x has 3 dimensions, we shift each batch element separately
+    If x has 2 dimensions, we shift the whole tensor
+    Modifies in place! Use clone if you need the original tensor unmodified
     """
-    r = torch.rand(x.shape[0])
-    for i in range(x.shape[0]):
-        if r[i] < prob:
+    if len(x.shape) == 3:   
+        r = torch.rand(x.shape[0])
+        for i in range(x.shape[0]):
+            if r[i] < prob:
+                z = torch.normal(mean=torch.tensor([0.0 for _ in range(x.shape[-1])]), std=torch.tensor([scale for _ in range(x.shape[-1])])).to(device)
+                z = torch.clamp(z, min=-2*scale, max=2*scale)
+                x[i, :, :] = x[i, :, :] + z
+    elif len(x.shape) == 2:
+        r = torch.rand(1)
+        if r < prob:
             z = torch.normal(mean=torch.tensor([0.0 for _ in range(x.shape[-1])]), std=torch.tensor([scale for _ in range(x.shape[-1])])).to(device)
             z = torch.clamp(z, min=-2*scale, max=2*scale)
-            x[i, :, :] = x[i, :, :] + z
-
+            x = x + z
+    else:
+        raise ValueError(f"Input tensor must have 2 or 3 dimensions (found {len(x.shape)})")
     return x
 
 
 def noise(x, device='cpu', prob=0.5, scale=0.1):
     """
     Adds gaussian random noise to each event, individually
+    If x has 3 dimensions, we add noise to each batch element separately
+    If x has 2 dimensions, we add noise to the whole tensor
+    Modifies in place! Use clone if you need the original tensor unmodified
     """
-    r = torch.rand(x.shape[0])
-    for i in range(x.shape[0]):
-        if r[i] < prob:
-            z = torch.normal(mean=torch.zeros_like(x[i, :, :]), std=(scale * torch.ones_like(x[i, :, :]))).to(device)
+    if len(x.shape) == 3:
+        r = torch.rand(x.shape[0])
+        for i in range(x.shape[0]):
+            if r[i] < prob:
+                z = torch.normal(mean=torch.zeros_like(x[i, :, :]), std=(scale * torch.ones_like(x[i, :, :]))).to(device)
+                z = torch.clamp(z, min=-2*scale, max=2*scale)
+                x[i, :, :] = x[i, :, :] + z
+    elif len(x.shape) == 2:
+        r = torch.rand(1)
+        if r < prob:
+            z = torch.normal(mean=torch.zeros_like(x), std=(scale * torch.ones_like(x))).to(device)
             z = torch.clamp(z, min=-2*scale, max=2*scale)
-            x[i, :, :] = x[i, :, :] + z
-
+            x = x + z
+    else:
+        raise ValueError(f"Input tensor must have 2 or 3 dimensions (found {len(x.shape)})")
     return x
+
 
 def compose(funcs):
     """
