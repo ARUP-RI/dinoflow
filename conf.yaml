@@ -31,8 +31,8 @@ training:
   teacher_events_steps: 50000
 
   koleo_loss_weight_start: 0.005
-  koleo_loss_weight_end: 0.0001
-  koleo_loss_weight_steps: 15000
+  koleo_loss_weight_end: 0.001
+  koleo_loss_weight_steps: 20000
 
   n_student_events: 512
   n_student_reps: 2
