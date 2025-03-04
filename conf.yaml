@@ -16,11 +16,11 @@ model:
 
 
 training:
-  batch_size: 128
+  batch_size: 256
   min_lr: 0.0000001
   max_lr: 0.00005
   warmup_iters: 5000
-  lr_decay_iters: 50000
+  lr_decay_iters: 100000
   epochs: 100
   checkpoint_freq: 10
   center_momentum: 0.99
