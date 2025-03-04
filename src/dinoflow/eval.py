@@ -168,16 +168,16 @@ class PrecomputedBackbone(Dataset):
         return torch.cat(results, dim=0)
 
     def __getitem__(self, i):
-        if isinstance(int, i):
+        if isinstance(i, int):
             result = self.cached_results[i]
             if result is None:
-                result = self.model(self.dataset[i][0].float())
+                result = self.model(self.dataset[i][0].to(self.model.device).float())
                 self.cached_results[i] = result.cpu()
         else:
             idx_to_compute = [idx for idx in i if self.cached_results[idx] is None]
             logger.info(f"Computing {len(idx_to_compute)} embeddings")
             if len(idx_to_compute) > 0:
-                results = self.model(torch.stack([self.dataset[idx][0].float() for idx in idx_to_compute], dim=0))
+                results = self.model(torch.stack([self.dataset[idx][0].to(self.model.device).float() for idx in idx_to_compute], dim=0))
                 for idx, result in zip(idx_to_compute, results):
                     self.cached_results[idx] = result.cpu()
 
@@ -203,6 +203,10 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
     """
     Evaluate the model on the test set
     """
+    
+    # Helps with too many open files errors?
+    torch.multiprocessing.set_sharing_strategy('file_system')
+
     logger.info(f"Loading backbone from {backbone}")
     backbone = load_checkpoint(backbone)
     classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
@@ -255,8 +259,8 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
     logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
     logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
     assert len(traindata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
-    precomputed_train = PrecomputedBackbone(backbone, traindata)
-    trainloader = DataLoader(precomputed_train, batch_size=batch_size, shuffle=True, num_workers=16)    
+    #traindata = PrecomputedBackbone(backbone, traindata)
+    trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)    
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
 
 
@@ -267,8 +271,8 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
     logger.info(f"Negative samples: {len(valdata.positive_negative_samples()[1])}")
     assert len(valdata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
 
-    precomputed_val = PrecomputedBackbone(backbone, valdata)
-    valloader = DataLoader(precomputed_val, batch_size=batch_size, shuffle=False, num_workers=16)
+    #valdata = PrecomputedBackbone(backbone, valdata)
+    valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
 
     comet_logger = CometLogger(
@@ -292,7 +296,7 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
 
 
 @app.command()
-def predict(checkpoint, test_labels, events: int = 4096, batch_size: int = 16):
+def predict(checkpoint: str, test_labels: str, labelkey:str, dataroot: str = ".", events: int = 4096, batch_size: int = 16):
     """
     Predict the labels for the test set
     """
@@ -312,18 +316,20 @@ def predict(checkpoint, test_labels, events: int = 4096, batch_size: int = 16):
     classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
     model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier, emit_predictions=True)  
     model.eval()
-    testdata = TubeData(test_labels, tubes_to_return=["m"], events_to_return=int(events))
+    testdata = TubeData(test_labels, data_root=dataroot, labelkey=labelkey, tubes_to_return=["m"], events_to_return=int(events))
     testloader = DataLoader(testdata, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(testloader.dataset)} samples for test")
 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     with torch.inference_mode():
-        for b, (batch, labels) in enumerate(testloader):
+        for b, (batch, rowdict) in enumerate(testloader):
             i = 0
-            preds = model(batch)
+            labels = rowdict['label']
+            preds = model(batch.to(device).float())
             preds = F.sigmoid(preds)
             for p, l in zip(preds, labels):
-                rowdata = testdata.get_row_data(b+i)
-                print(f"{rowdata['accession']}\t {p.item() :.4f}\t {l.item()}")
+                idx = b * batch_size + i
+                print(f"{idx},{rowdict['ACCESSION'][i]},{p.item() :.4f},{labels[i]}")
                 i += 1
 
 if __name__ == "__main__":
