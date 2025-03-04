@@ -21,7 +21,7 @@ import numpy as np
 import logging
 
 
-from dinoflow.models import TubeEncoder, TubeEncoderWithProjection
+from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, SDPAPrototypeEmbStackWithProjection
 from dinoflow import data
 from dinoflow.loss import KoLeoLoss, CosineSimLoss
 from dinoflow.data import scale, shift, shuffle, compose, noise, standardize_range, subsample_events, NoLabelTubes, subsample_batch
@@ -298,8 +298,11 @@ def train_dino(conf, run_name):
         if ckpt.get('teacher_center') is not None:
             teacher_center = ckpt['teacher_center']
     else:
-        student = TubeEncoderWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
-        teacher = TubeEncoderWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
+        # student = TubeEncoderWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
+        # teacher = TubeEncoderWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
+
+        student = SDPAPrototypeEmbStackWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], proto_dim=conf['model']['proto_dim'], d_ff=conf['model']['d_ff'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim'], layers=conf['model']['layers']).to(DEVICE)
+        teacher = SDPAPrototypeEmbStackWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], proto_dim=conf['model']['proto_dim'], d_ff=conf['model']['d_ff'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim'], layers=conf['model']['layers']).to(DEVICE)
 
         optimizer = torch.optim.AdamW(student.parameters(), lr=conf['training']['min_lr'])
 
