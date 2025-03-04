@@ -75,6 +75,7 @@ class SDPAPrototypeEmb(nn.Module):
         self.layernorm2 = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(p=0.1)
         self.d_ff = d_ff
+        self.prototype_temp = 0.1
         activation = nn.GELU()
 
         self.Q = nn.Parameter(torch.empty(embed_dim, embed_dim))
@@ -94,7 +95,8 @@ class SDPAPrototypeEmb(nn.Module):
 
     def forward(self, x):
         x = x @ self.Q
-        a = F.scaled_dot_product_attention(x, self.L, self.V)
+        lsm = F.softmax(self.L / self.prototype_temp, dim=-1)
+        a = F.scaled_dot_product_attention(x, lsm, self.V)
         a = self.layernorm1(a + x)
 
         a = self.layernorm2(self.ff(a) + a)
