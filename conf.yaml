@@ -11,6 +11,8 @@ model:
   heads: 4
   projection_dim: 4096
   hidden_dim: 1024
+  proto_dim: 128
+  d_ff: 1024
 
 
 training:
