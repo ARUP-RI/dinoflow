@@ -261,6 +261,17 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt, train_labels, test_labels, run_name, lab
     t_backbone, _ = load_checkpoint(t_ckpt)
     m_backbone, _ = load_checkpoint(m_ckpt)
 
+    # Turn off gradients and set to eval mode
+    b_backbone.eval()
+    t_backbone.eval()
+    m_backbone.eval()
+    for p in b_backbone.parameters():
+        p.requires_grad = False
+    for p in t_backbone.parameters():
+        p.requires_grad = False
+    for p in m_backbone.parameters():
+        p.requires_grad = False
+
     btm = BTMTubes(num_features=13,
                     model_embed_dim=modelconf['model_dim'],
                     backbone_heads=modelconf['heads'],
