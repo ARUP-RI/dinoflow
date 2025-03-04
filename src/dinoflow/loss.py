@@ -75,3 +75,19 @@ class CosineSimLoss(nn.Module):
         on_diagonal_mean = S.diagonal().mean()
         off_diagonal_mean = (S.sum() - S.diagonal().sum()) / (S.numel() - S.shape[0])
         return off_diagonal_mean - on_diagonal_mean
+
+
+class SelfCosineSimLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        
+        # Normalize each column (vector) to unit norm
+        X_norm = x / (x.norm(dim=0, keepdim=True) + 1e-8)  # Avoid division by zero
+        # Compute cosine similarity using matrix multiplication
+        S = X_norm.T @ X_norm  # (n x m) @ (m x n) -> (n x n)
+    
+        # Compute mean of off-diagonal elements
+        off_diagonal_mean = (S.sum() - S.diagonal().sum()) / (S.numel() - S.shape[0])
+        return off_diagonal_mean
