@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader, Dataset
 import numpy as np
 
 
-from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint
+from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint, BTMTubes
 from dinoflow.data import TubeData, collate_fn, compose, shift, scale, noise, standardize_range
 from dinoflow import util
 
@@ -56,9 +56,9 @@ class CombinedModel(nn.Module):
 
 
 class ClassificationModel(pl.LightningModule):
-    def __init__(self, backbone, classifier, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False):
+    def __init__(self, model, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False):
         super().__init__()
-        self.model = CombinedModel(backbone, classifier)
+        self.model = model #
         self.min_lr = min_lr
         self.max_lr = max_lr
         self.warmup_iters = warmup_iters
@@ -140,52 +140,6 @@ class ClassificationModel(pl.LightningModule):
         return [optimizer], [lrschedule]
 
 
-class PrecomputedBackbone(Dataset):
-    def __init__(self, backbone_model, dataset):
-        self.model = backbone_model
-        self.dataset = dataset
-        self.cached_results = [None] * len(dataset)
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info(f"Using device {self.device} for backbone precompute")
-        self.model.to(self.device)
-        # self.precomputed_results = self._precompute_all()
-
-    @torch.inference_mode()
-    def _precompute_all(self, batch_size=384):
-        results = []
-        logger.info(f"Precomputing {len(self.dataset)} embeddings")
-        batch = []
-        for i in tqdm(range(len(self.dataset))):
-            x, rowinfo = self.dataset[i]
-            batch.append(x)
-            if len(batch) == batch_size:
-                embeddings = self.model(torch.stack(batch, dim=0).to(self.device).float())
-                results.append(embeddings.cpu())
-                batch = []
-        if len(batch) > 0:
-            embeddings = self.model(torch.stack(batch, dim=0).to(self.device).float())
-            results.append(embeddings.cpu())
-        return torch.cat(results, dim=0)
-
-    def __getitem__(self, i):
-        if isinstance(i, int):
-            result = self.cached_results[i]
-            if result is None:
-                result = self.model(self.dataset[i][0].to(self.model.device).float())
-                self.cached_results[i] = result.cpu()
-        else:
-            idx_to_compute = [idx for idx in i if self.cached_results[idx] is None]
-            logger.info(f"Computing {len(idx_to_compute)} embeddings")
-            if len(idx_to_compute) > 0:
-                results = self.model(torch.stack([self.dataset[idx][0].to(self.model.device).float() for idx in idx_to_compute], dim=0))
-                for idx, result in zip(idx_to_compute, results):
-                    self.cached_results[idx] = result.cpu()
-
-        return self.cached_results[i]
-    
-    def __len__(self):
-        return len(self.dataset)
-
 
 def load_featmeans_stds(conf, tube_type):
     if tube_type == 't':
@@ -198,40 +152,7 @@ def load_featmeans_stds(conf, tube_type):
         raise ValueError(f"Unknown tube type: {tube_type}")
 
 
-@app.command()
-def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroot: str = "/", positive_repeat_factor: int = 1, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, tube_type: str = "m") :
-    """
-    Evaluate the model on the test set
-    """
-    
-    # Helps with too many open files errors?
-    torch.multiprocessing.set_sharing_strategy('file_system')
-
-    logger.info(f"Loading backbone from {backbone}")
-    backbone = load_checkpoint(backbone)
-    classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
-    model = ClassificationModel(backbone, classifier, emit_predictions=True)
-
-    with open(conf, 'r') as f:
-        conf = yaml.safe_load(f)
-
-    feat_means, feat_stds = load_featmeans_stds(conf, tube_type)
-    feat_means = torch.tensor(feat_means).to(model.device)
-    feat_stds = torch.tensor(feat_stds).to(model.device)
-
-    if checkpoint is not None:
-        logger.info(f"Loading full model checkpoint from {checkpoint}")
-        model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier)    
-    
-    if freeze_backbone:
-        logger.info("Freezing backbone")
-        backbone.eval() # freeze backbone
-        for p in backbone.parameters():
-            p.requires_grad = False
-    else:
-        logger.info("Unfreezing backbone")
-        backbone.train()
-
+def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor=1):
     torch.set_float32_matmul_precision('medium')
 
     # Repeat rows in positive samples to balance the dataset
@@ -253,7 +174,7 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
     val_transforms = compose([
     ])
     
-    traindata = TubeData(train_labels, tubes_to_return=[tube_type], events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=train_transforms)
+    traindata = TubeData(train_labels, tubes_to_return=tubes, events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=train_transforms)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=8)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
     logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
@@ -264,7 +185,7 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
 
 
-    valdata = TubeData(test_labels, tubes_to_return=[tube_type], events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=val_transforms)
+    valdata = TubeData(test_labels, tubes_to_return=tubes, events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=val_transforms)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=8)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
     logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
@@ -294,6 +215,77 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
     trainer.fit(model, trainloader, valloader)
 
 
+@app.command()
+def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroot: str = "/", positive_repeat_factor: int = 1, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, tube_type: str = "m") :
+    """
+    Evaluate the model on the test set
+    """
+    # Helps with too many open files errors?
+    torch.multiprocessing.set_sharing_strategy('file_system')
+
+    logger.info(f"Loading backbone from {backbone}")
+    backbone, modelconf = load_checkpoint(backbone)
+    classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
+    combined = CombinedModel(backbone, classifier)
+    model = ClassificationModel(combined, emit_predictions=True)
+
+    with open(conf, 'r') as f:
+        conf = yaml.safe_load(f)
+
+    # feat_means, feat_stds = load_featmeans_stds(conf, tube_type)
+    # feat_means = torch.tensor(feat_means).to(model.device)
+    # feat_stds = torch.tensor(feat_stds).to(model.device)
+
+    if checkpoint is not None:
+        logger.info(f"Loading full model checkpoint from {checkpoint}")
+        model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier)    
+    
+    if freeze_backbone:
+        logger.info("Freezing backbone")
+        backbone.eval() # freeze backbone
+        for p in backbone.parameters():
+            p.requires_grad = False
+    else:
+        logger.info("Unfreezing backbone")
+        backbone.train()
+
+    _run_trainer(model, train_labels, test_labels, [tube_type], run_name, labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor)
+    
+
+@app.command()
+def train3tubes(b_ckpt, t_ckpt, m_ckpt, train_labels, test_labels, run_name, labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor=1):
+    # Helps with too many open files errors?
+    torch.multiprocessing.set_sharing_strategy('file_system')
+
+    b_backbone, modelconf = load_checkpoint(b_ckpt)
+    t_backbone, _ = load_checkpoint(t_ckpt)
+    m_backbone, _ = load_checkpoint(m_ckpt)
+
+    # Turn off gradients and set to eval mode
+    b_backbone.eval()
+    t_backbone.eval()
+    m_backbone.eval()
+    for p in b_backbone.parameters():
+        p.requires_grad = False
+    for p in t_backbone.parameters():
+        p.requires_grad = False
+    for p in m_backbone.parameters():
+        p.requires_grad = False
+
+    btm = BTMTubes(num_features=13,
+                    model_embed_dim=modelconf['model_dim'],
+                    backbone_heads=modelconf['heads'],
+                    backbone_layers=modelconf['layers'],
+                    output_classes=1)
+
+    btm.b_backbone = b_backbone
+    btm.t_backbone = t_backbone
+    btm.m_backbone = m_backbone
+    model = ClassificationModel(btm, emit_predictions=True)
+
+    _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor)
+    
+    
 
 @app.command()
 def predict(checkpoint: str, test_labels: str, labelkey:str, dataroot: str = ".", events: int = 4096, batch_size: int = 16):
