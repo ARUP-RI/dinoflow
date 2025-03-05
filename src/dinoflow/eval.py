@@ -165,7 +165,7 @@ class RegressionModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, rowinfo = batch
         labels = rowinfo['label']
-        preds = F.sigmoid(self(x).squeeze(1) * 100.0)
+        preds = F.sigmoid(self(x).squeeze(1)) * 100.0
         loss = F.mse_loss(preds, labels.float())
         self.training_loss_mean.update(loss)
         return loss
@@ -174,7 +174,7 @@ class RegressionModel(pl.LightningModule):
         x, rowinfo = batch
         labels = rowinfo['label']
         accs = rowinfo['ACCESSION']
-        preds = F.sigmoid(self(x).squeeze(1) * 100.0)
+        preds = F.sigmoid(self(x).squeeze(1)) * 100.0
         loss = F.mse_loss(preds, labels.float())
         
         if self.emit_predictions:
