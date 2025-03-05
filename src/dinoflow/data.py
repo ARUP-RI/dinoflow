@@ -373,10 +373,15 @@ class TubeData(Dataset):
          
         # For now....
         label = row[self.labelkey]
-        if label:
-            label = 1.0
+        # If datatype of row with label is float, we just pass back the value,
+        # otherwise we convert to 0/1
+        if isinstance(label, float):
+            label = label
         else:
-            label = 0.0
+            if label:
+                label = 1.0
+            else:
+                label = 0.0
 
         rowdict = row.to_dict()
         rowdict['label'] = label
