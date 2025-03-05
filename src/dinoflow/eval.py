@@ -250,14 +250,25 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
 
     val_transforms = compose([
     ])
-    
+
+    checkpoint_monitor_mode = 'min'
+    checkpoint_monitor_val = 'val_loss'
+    comet_project = 'dinoflow-classifier'
+
     traindata = TubeData(train_labels, tubes_to_return=tubes, events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=train_transforms)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=8)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
-    logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
-    logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
-    assert len(traindata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
-    #traindata = PrecomputedBackbone(backbone, traindata)
+    if isinstance(model, ClassificationModel):
+        logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
+        logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
+        checkpoint_monitor_val = 'fscore'
+        checkpoint_monitor_mode = 'max'
+        comet_project = 'dinoflow-classifier'
+        assert len(traindata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
+    else:
+        checkpoint_monitor_val = 'rmse'
+        checkpoint_monitor_mode = 'min'
+        comet_project = 'dinoflow-viability'
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)    
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
 
@@ -265,18 +276,18 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     valdata = TubeData(test_labels, tubes_to_return=tubes, events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=val_transforms)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=8)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
-    logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
-    logger.info(f"Negative samples: {len(valdata.positive_negative_samples()[1])}")
-    assert len(valdata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
+    if isinstance(model, ClassificationModel):
+        logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
+        logger.info(f"Negative samples: {len(valdata.positive_negative_samples()[1])}")
+        assert len(valdata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
 
-    #valdata = PrecomputedBackbone(backbone, valdata)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
 
     comet_logger = CometLogger(
             workspace="brendan",  # Optional
             save_dir="dinoflow_classifier_runs",  # Optional
-            project_name="dinoflow-classifier",  # Optional
+            project_name=comet_project,  # Optional
             experiment_name=run_name,  # Optional
         )
 
@@ -284,7 +295,7 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
                         accelerator='auto',
                         precision="bf16-mixed",
                         callbacks=[
-                            ModelCheckpoint(dirpath=f"dinoflow_eval_{run_name}", monitor='fscore', mode='max', save_top_k=1, save_last=True, filename=run_name + "_e{epoch}"),
+                            ModelCheckpoint(dirpath=f"dinoflow_eval_{run_name}", monitor=checkpoint_monitor_val, mode=checkpoint_monitor_mode, save_top_k=1, save_last=True, filename=run_name + "_e{epoch}"),
                             LearningRateMonitor(logging_interval='step'),
                         ],
                         logger=comet_logger)
@@ -309,6 +320,7 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
         model = ClassificationModel(combined, emit_predictions=True)
     elif mode == 'regression':
         model = RegressionModel(combined, emit_predictions=True)
+        assert positive_repeat_factor == 1
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
