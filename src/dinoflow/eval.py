@@ -64,16 +64,14 @@ class ClassificationModel(pl.LightningModule):
         self.warmup_iters = warmup_iters
         self.lr_decay_iters = lr_decay_iters
         self.accuracy = BinaryAccuracy()
-        self.precision = BinaryPrecision()
-        self.recall = BinaryRecall()
-        self.f1score = BinaryF1Score()
-        self.precision25 = BinaryPrecision()  
-        self.recall25 = BinaryRecall()
-        self.f1score25 = BinaryF1Score()
 
         self.training_loss_mean = MeanMetric()
         self.validation_loss_mean = MeanMetric()
         self.emit_predictions = emit_predictions
+        
+        # Lists to collect predictions and labels
+        self.val_preds = []
+        self.val_labels = []
 
     def forward(self, x):
         return self.model(x)
@@ -86,6 +84,11 @@ class ClassificationModel(pl.LightningModule):
         self.training_loss_mean.update(loss)
         return loss
     
+    def on_validation_epoch_start(self):
+        # Clear the lists at the start of validation
+        self.val_preds = []
+        self.val_labels = []
+    
     def validation_step(self, batch, batch_idx):
         x, rowinfo = batch
         labels = rowinfo['label']
@@ -93,17 +96,16 @@ class ClassificationModel(pl.LightningModule):
         preds = self(x).squeeze(-1)
         loss = torch.nn.functional.binary_cross_entropy_with_logits(preds, labels.float())
         preds = torch.nn.Sigmoid()(preds) # raw outputs are logits, non-sigmoid
+        
+        # Store predictions and labels for later use
+        self.val_preds.append(preds.detach().float())
+        self.val_labels.append(labels.detach().float())
+        
         if self.emit_predictions:
             for p, l, a in zip(preds, labels, accs):
                 if l == 1 or p.item() > 0.5:
                     print(f"{a}\t{p.item() :.4f}\t{l.item() :.2f}")
         self.accuracy(preds, labels)
-        self.precision(preds, labels)
-        self.recall(preds, labels)
-        self.f1score(preds, labels)
-        self.precision25(preds > 0.25, labels)
-        self.recall25(preds > 0.25, labels)
-        self.f1score25(preds > 0.25, labels)
         
         self.validation_loss_mean.update(loss)
 
@@ -111,22 +113,80 @@ class ClassificationModel(pl.LightningModule):
         lrsched = self.lr_schedulers()
         lr = lrsched.get_last_lr()[0]
         accuracy = self.accuracy.compute()
-        precision = self.precision.compute()
-        recall = self.recall.compute()
-        fscore = self.f1score.compute()
-        precision25 = self.precision25.compute()
-        recall25 = self.recall25.compute()
-        fscore25 = self.f1score25.compute()
+        
+        # Gather predictions and labels from all processes
+        if self.trainer.world_size > 1:
+            # For distributed training
+            gathered_preds = self.all_gather(torch.cat(self.val_preds).float())
+            gathered_labels = self.all_gather(torch.cat(self.val_labels).float())
+            
+            # Reshape if needed
+            if gathered_preds.dim() > 2:
+                gathered_preds = gathered_preds.reshape(-1)
+            if gathered_labels.dim() > 2:
+                gathered_labels = gathered_labels.reshape(-1)
+        else:
+            # For single process
+            gathered_preds = torch.cat(self.val_preds).float()
+            gathered_labels = torch.cat(self.val_labels).float()
+        
+        # Only create and log the plot on the main process
+        if self.trainer.is_global_zero and isinstance(self.logger, CometLogger):
+            import matplotlib.pyplot as plt
+            from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
+            
+            # Create ROC curve
+            fpr, tpr, _ = roc_curve(gathered_labels.cpu().numpy(), gathered_preds.cpu().numpy())
+            roc_auc = auc(fpr, tpr)
+            
+            fig, ax = plt.subplots(figsize=(10, 8))
+            ax.plot(fpr, tpr, label=f'ROC curve (AUC = {roc_auc:.3f})')
+            ax.plot([0, 1], [0, 1], 'k--')
+            ax.set_xlim([0.0, 1.0])
+            ax.set_ylim([0.0, 1.05])
+            ax.set_xlabel('False Positive Rate')
+            ax.set_ylabel('True Positive Rate')
+            ax.set_title('Receiver Operating Characteristic')
+            ax.legend(loc="lower right")
+            ax.grid(True)
+            
+            # Log the ROC curve to CometML
+            self.logger.experiment.log_figure(figure=fig, figure_name="ROC_Curve", step=self.current_epoch)
+            plt.close(fig)
+            
+            # Create Precision-Recall curve
+            precision_vals, recall_vals, thresholds = precision_recall_curve(gathered_labels.cpu().numpy(), gathered_preds.cpu().numpy())
+            avg_precision = average_precision_score(gathered_labels.cpu().numpy(), gathered_preds.cpu().numpy())
+            
+            # Find threshold that maximizes F1 score
+            f1_scores = 2 * precision_vals * recall_vals / (precision_vals + recall_vals)
+            max_f1_idx = np.argmax(f1_scores)
+            threshold = thresholds[max_f1_idx]
+            best_recall = recall_vals[max_f1_idx]
+            best_precision = precision_vals[max_f1_idx]
+            best_f1 = f1_scores[max_f1_idx]
 
-        self.log('precision', precision, sync_dist=True )
+            fig, ax = plt.subplots(figsize=(10, 8))
+            ax.plot(recall_vals, precision_vals, label=f'PR curve (AP = {avg_precision:.3f})')
+            ax.set_xlim([0.0, 1.0])
+            ax.set_ylim([0.0, 1.05])
+            ax.set_xlabel('Recall')
+            ax.set_ylabel('Precision')
+            ax.set_title('Precision-Recall Curve')
+            ax.legend(loc="lower left")
+            ax.grid(True)
+            
+            # Log the PR curve to CometML
+            self.logger.experiment.log_figure(figure=fig, figure_name="PR_Curve", step=self.current_epoch)
+            plt.close(fig)
+
+        self.log('precision', best_precision, sync_dist=True )
         self.log('accuracy', accuracy, sync_dist=True)
-        self.log('recall', recall, sync_dist=True)
-        self.log('fscore', fscore, sync_dist=True)
+        self.log('recall', best_recall, sync_dist=True)
+        self.log('fscore', best_f1, sync_dist=True)
+        self.log('threshold', threshold, sync_dist=True)
         self.log('val_loss', self.validation_loss_mean.compute(), sync_dist=True)
         self.log('training_loss', self.training_loss_mean.compute(), sync_dist=True)
-        self.log('precision25', precision25, sync_dist=True)
-        self.log('recall25', recall25, sync_dist=True)
-        self.log('fscore25', fscore25, sync_dist=True)
         self.log('learning_rate', lr)
     
         self.accuracy.reset()
