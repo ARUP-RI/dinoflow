@@ -214,8 +214,8 @@ class RegressionModel(pl.LightningModule):
         # Gather predictions and labels from all processes
         if self.trainer.world_size > 1:
             # For distributed training
-            gathered_preds = self.all_gather(torch.cat(self.val_preds))
-            gathered_labels = self.all_gather(torch.cat(self.val_labels))
+            gathered_preds = self.all_gather(torch.cat(self.val_preds).float())
+            gathered_labels = self.all_gather(torch.cat(self.val_labels).float())
             
             # Reshape if needed
             if gathered_preds.dim() > 2:
@@ -224,8 +224,8 @@ class RegressionModel(pl.LightningModule):
                 gathered_labels = gathered_labels.reshape(-1)
         else:
             # For single process
-            gathered_preds = torch.cat(self.val_preds)
-            gathered_labels = torch.cat(self.val_labels)
+            gathered_preds = torch.cat(self.val_preds).float()
+            gathered_labels = torch.cat(self.val_labels).float()
         
         # Only create and log the plot on the main process
         if self.trainer.is_global_zero:
@@ -358,10 +358,11 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
 
 
 @app.command()
-def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroot: str = "/", positive_repeat_factor: int = 1, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, tube_type: str = "m", mode: str = 'binary') :
+def train(run_name, train_labels, test_labels, backbone: str, conf: str, tube_type: str = "", dataroot: str = "/", positive_repeat_factor: int = 1, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, mode: str = 'binary') :
     """
     Evaluate the model on the test set
     """
+    assert tube_type != "", "Tube type must be specified"
     # Helps with too many open files errors?
     torch.multiprocessing.set_sharing_strategy('file_system')
 
