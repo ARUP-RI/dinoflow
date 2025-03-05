@@ -1,4 +1,3 @@
-
 import logging
 from functools import partial
 
@@ -14,6 +13,7 @@ from torchmetrics.classification import BinaryPrecisionRecallCurve, BinaryF1Scor
 from torchmetrics.aggregation import MeanMetric, SumMetric
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import CometLogger
+from torchmetrics.regression import MeanSquaredError, MeanAbsoluteError, R2Score
 
 from torch.utils.data import DataLoader, Dataset
 import numpy as np
@@ -140,6 +140,83 @@ class ClassificationModel(pl.LightningModule):
         return [optimizer], [lrschedule]
 
 
+class RegressionModel(pl.LightningModule):
+    def __init__(self, model, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False):
+        super().__init__()
+        self.model = model
+        self.min_lr = min_lr
+        self.max_lr = max_lr
+        self.warmup_iters = warmup_iters
+        self.lr_decay_iters = lr_decay_iters
+        self.emit_predictions = emit_predictions
+        
+        # Regression metrics
+        self.mse = MeanSquaredError()
+        self.rmse = MeanSquaredError(squared=False)  # RMSE is sqrt of MSE
+        self.mae = MeanAbsoluteError()
+        self.r2 = R2Score()
+        
+        self.training_loss_mean = MeanMetric()
+        self.validation_loss_mean = MeanMetric()
+
+    def forward(self, x):
+        return self.model(x)
+    
+    def training_step(self, batch, batch_idx):
+        x, rowinfo = batch
+        labels = rowinfo['label']
+        preds = F.sigmoid(self(x).squeeze(1) * 100.0)
+        loss = F.mse_loss(preds, labels.float())
+        self.training_loss_mean.update(loss)
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        x, rowinfo = batch
+        labels = rowinfo['label']
+        accs = rowinfo['ACCESSION']
+        preds = F.sigmoid(self(x).squeeze(1) * 100.0)
+        loss = F.mse_loss(preds, labels.float())
+        
+        if self.emit_predictions:
+            for p, l, a in zip(preds, labels, accs):
+                print(f"{a}\t{p.item():.4f}\t{l.item():.4f}")
+        
+        # Update metrics
+        self.mse(preds, labels)
+        self.rmse(preds, labels)
+        self.mae(preds, labels)
+        self.r2(preds, labels)
+        self.validation_loss_mean.update(loss)
+
+    def on_validation_epoch_end(self):
+        lrsched = self.lr_schedulers()
+        lr = lrsched.get_last_lr()[0]
+        
+        # Compute and log metrics
+        mse = self.mse.compute()
+        rmse = self.rmse.compute()
+        mae = self.mae.compute()
+        r2 = self.r2.compute()
+        
+        self.log('mse', mse, sync_dist=True)
+        self.log('rmse', rmse, sync_dist=True)
+        self.log('mae', mae, sync_dist=True)
+        self.log('r2', r2, sync_dist=True)
+        self.log('val_loss', self.validation_loss_mean.compute(), sync_dist=True)
+        self.log('training_loss', self.training_loss_mean.compute(), sync_dist=True)
+        self.log('learning_rate', lr)
+        
+        # Reset metrics
+        self.mse.reset()
+        self.rmse.reset()
+        self.mae.reset()
+        self.r2.reset()
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
+        lrschedule = util.WarmupCosineLRScheduler(optimizer, self.max_lr, self.min_lr, self.warmup_iters, self.lr_decay_iters)
+        return [optimizer], [lrschedule]
+
 
 def load_featmeans_stds(conf, tube_type):
     if tube_type == 't':
@@ -216,7 +293,7 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
 
 
 @app.command()
-def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroot: str = "/", positive_repeat_factor: int = 1, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, tube_type: str = "m") :
+def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroot: str = "/", positive_repeat_factor: int = 1, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, tube_type: str = "m", mode: str = 'binary') :
     """
     Evaluate the model on the test set
     """
@@ -227,7 +304,13 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, dataroo
     backbone, modelconf = load_checkpoint(backbone)
     classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
     combined = CombinedModel(backbone, classifier)
-    model = ClassificationModel(combined, emit_predictions=True)
+
+    if mode == 'binary':
+        model = ClassificationModel(combined, emit_predictions=True)
+    elif mode == 'regression':
+        model = RegressionModel(combined, emit_predictions=True)
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
 
     with open(conf, 'r') as f:
         conf = yaml.safe_load(f)
@@ -288,7 +371,7 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt, train_labels, test_labels, run_name, lab
     
 
 @app.command()
-def predict(checkpoint: str, test_labels: str, labelkey:str, dataroot: str = ".", events: int = 4096, batch_size: int = 16):
+def predict(checkpoint: str, test_labels: str, labelkey:str, dataroot: str = ".", events: int = 4096, batch_size: int = 16, mode: str = 'binary'):
     """
     Predict the labels for the test set
     """
@@ -306,7 +389,12 @@ def predict(checkpoint: str, test_labels: str, labelkey:str, dataroot: str = "."
                                         layers=backbone_conf['layers'],
                                         heads=backbone_conf['heads']).to(DEVICE)
     classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
-    model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier, emit_predictions=True)  
+    if mode == 'binary':
+        model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier, emit_predictions=True)  
+    elif mode == 'regression':
+        model = RegressionModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier, emit_predictions=True)  
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
     model.eval()
     testdata = TubeData(test_labels, data_root=dataroot, labelkey=labelkey, tubes_to_return=["m"], events_to_return=int(events))
     testloader = DataLoader(testdata, batch_size=batch_size, shuffle=False, num_workers=16)
