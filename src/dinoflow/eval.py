@@ -248,7 +248,7 @@ class RegressionModel(pl.LightningModule):
                 ax.grid(True)
                 
                 # Log the figure to CometML
-                self.logger.experiment.log_figure(figure=fig, figure_name="Predictions_vs_Actual")
+                self.logger.experiment.log_figure(figure=fig, figure_name="Predictions_vs_Actual", step=self.current_epoch)
                 plt.close(fig)
         
         # Log metrics
@@ -403,7 +403,16 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, tube_ty
     
 
 @app.command()
-def train3tubes(b_ckpt, t_ckpt, m_ckpt, train_labels, test_labels, run_name, labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor=1):
+def train3tubes(b_ckpt, t_ckpt, m_ckpt, 
+                train_labels, test_labels,
+                run_name,
+                labelkey: str = "label",
+                dataroot: str = ".",
+                events: int = 4096,
+                batch_size: int = 16,
+                epochs: int = 50,
+                mode:str = 'binary',
+                positive_repeat_factor: int = 1):
     # Helps with too many open files errors?
     torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -431,7 +440,12 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt, train_labels, test_labels, run_name, lab
     btm.b_backbone = b_backbone
     btm.t_backbone = t_backbone
     btm.m_backbone = m_backbone
-    model = ClassificationModel(btm, emit_predictions=True)
+    if mode == 'binary':
+        model = ClassificationModel(btm, emit_predictions=True)
+    elif mode == 'regression':
+        model = RegressionModel(btm, emit_predictions=True)
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
 
     _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor)
     
