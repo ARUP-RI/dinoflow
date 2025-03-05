@@ -11,16 +11,16 @@ model:
   heads: 4
   projection_dim: 4096
   hidden_dim: 1024
-  proto_dim: 128
-  d_ff: 1024
+  #proto_dim: 256
+  #d_ff: 1024
 
 
 training:
-  batch_size: 128
+  batch_size: 256
   min_lr: 0.0000001
   max_lr: 0.00005
   warmup_iters: 5000
-  lr_decay_iters: 10ZZ0000
+  lr_decay_iters: 100000
   epochs: 100
   checkpoint_freq: 10
   center_momentum: 0.99

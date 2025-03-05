@@ -143,7 +143,7 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
     proto_cosim_loss = SelfCosineSimLoss()
     cs_loss_sum = 0
     koleo_loss_sum = 0
-    proto_loss_weight = 0.1
+    proto_loss_weight = 0.0
     proto_loss_sum = 0
     report_freq = 10
     for i, batch in enumerate(loader):
@@ -167,12 +167,12 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
             dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=0.2, t_temp=0.05)
             koleo_loss = koleoloss(y_s)
             
-            protot_cosim_loss = proto_cosim_loss(student.sdpa_prototype_emb_stack.L)
+            protot_cosim_loss = torch.tensor(0) #proto_cosim_loss(student.module.sdpa_prototype_emb_stack.L)
             
             
-            loss = dinoloss + proto_loss_weight * protot_cosim_loss + koleo_loss_weight * koleo_loss
+            loss = dinoloss + koleo_loss_weight * koleo_loss
             koleo_loss_sum += koleo_loss.item()
-            proto_loss_sum += protot_cosim_loss.item()
+            proto_loss_sum += 0 #protot_cosim_loss.item()
 
             epoch_loss_sum += loss.item()
             dino_loss_sum += dinoloss.item()
@@ -205,7 +205,7 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
                 yt_self_loss_sum += self_cos_sim.item()
                 yt_other_loss_sum += other_cosim.item()
     
-                logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} proto loss: {proto_loss_sum.item() :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cosim: {self_cos_sim.item() :.4f} other_cosim: {other_cosim.item() :.4f} teacher mo: {param_mo :.4f} teacher events: {n_teacher_events} kl weight: {koleo_loss_weight :.5f}")
+                logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cosim: {self_cos_sim.item() :.4f} other_cosim: {other_cosim.item() :.4f} teacher mo: {param_mo :.4f} teacher events: {n_teacher_events} kl weight: {koleo_loss_weight :.5f}")
                 
 
         teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
@@ -305,11 +305,11 @@ def train_dino(conf, run_name):
         if ckpt.get('teacher_center') is not None:
             teacher_center = ckpt['teacher_center']
     else:
-        # student = TubeEncoderWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
-        # teacher = TubeEncoderWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
+        student = TubeEncoderWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
+        teacher = TubeEncoderWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], layers=conf['model']['layers'], heads=conf['model']['heads'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim']).to(DEVICE)
 
-        student = SDPAPrototypeEmbStackWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], proto_dim=conf['model']['proto_dim'], d_ff=conf['model']['d_ff'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim'], layers=conf['model']['layers']).to(DEVICE)
-        teacher = SDPAPrototypeEmbStackWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], proto_dim=conf['model']['proto_dim'], d_ff=conf['model']['d_ff'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim'], layers=conf['model']['layers']).to(DEVICE)
+        #student = SDPAPrototypeEmbStackWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], proto_dim=conf['model']['proto_dim'], d_ff=conf['model']['d_ff'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim'], layers=conf['model']['layers']).to(DEVICE)
+        #teacher = SDPAPrototypeEmbStackWithProjection(num_features=conf['model']['num_features'], model_embed_dim=conf['model']['model_dim'], proto_dim=conf['model']['proto_dim'], d_ff=conf['model']['d_ff'], hidden_dim=conf['model']['hidden_dim'], projection_dim=conf['model']['projection_dim'], layers=conf['model']['layers']).to(DEVICE)
 
         optimizer = torch.optim.AdamW(student.parameters(), lr=conf['training']['min_lr'])
 
