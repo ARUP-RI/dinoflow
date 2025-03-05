@@ -158,6 +158,10 @@ class RegressionModel(pl.LightningModule):
         
         self.training_loss_mean = MeanMetric()
         self.validation_loss_mean = MeanMetric()
+        
+        # Lists to collect predictions and labels
+        self.val_preds = []
+        self.val_labels = []
 
     def forward(self, x):
         return self.model(x)
@@ -170,12 +174,21 @@ class RegressionModel(pl.LightningModule):
         self.training_loss_mean.update(loss)
         return loss
     
+    def on_validation_epoch_start(self):
+        # Clear the lists at the start of validation
+        self.val_preds = []
+        self.val_labels = []
+    
     def validation_step(self, batch, batch_idx):
         x, rowinfo = batch
         labels = rowinfo['label']
         accs = rowinfo['ACCESSION']
         preds = F.sigmoid(self(x).squeeze(1)) * 100.0
         loss = F.mse_loss(preds, labels.float())
+        
+        # Store predictions and labels for later use
+        self.val_preds.append(preds.detach())
+        self.val_labels.append(labels.detach())
         
         if self.emit_predictions:
             for p, l, a in zip(preds, labels, accs):
@@ -192,12 +205,53 @@ class RegressionModel(pl.LightningModule):
         lrsched = self.lr_schedulers()
         lr = lrsched.get_last_lr()[0]
         
-        # Compute and log metrics
+        # Compute metrics
         mse = self.mse.compute()
         rmse = self.rmse.compute()
         mae = self.mae.compute()
         r2 = self.r2.compute()
         
+        # Gather predictions and labels from all processes
+        if self.trainer.world_size > 1:
+            # For distributed training
+            gathered_preds = self.all_gather(torch.cat(self.val_preds))
+            gathered_labels = self.all_gather(torch.cat(self.val_labels))
+            
+            # Reshape if needed
+            if gathered_preds.dim() > 2:
+                gathered_preds = gathered_preds.reshape(-1)
+            if gathered_labels.dim() > 2:
+                gathered_labels = gathered_labels.reshape(-1)
+        else:
+            # For single process
+            gathered_preds = torch.cat(self.val_preds)
+            gathered_labels = torch.cat(self.val_labels)
+        
+        # Only create and log the plot on the main process
+        if self.trainer.is_global_zero:
+            # Create scatter plot of predictions vs actual values
+            if isinstance(self.logger, CometLogger):
+                import matplotlib.pyplot as plt
+                
+                # Create scatter plot
+                fig, ax = plt.subplots(figsize=(10, 8))
+                ax.scatter(gathered_labels.cpu().numpy(), gathered_preds.cpu().numpy(), alpha=0.5)
+                
+                # Add perfect prediction line
+                min_val = min(gathered_labels.min().item(), gathered_preds.min().item())
+                max_val = max(gathered_labels.max().item(), gathered_preds.max().item())
+                ax.plot([min_val, max_val], [min_val, max_val], 'r--')
+                
+                ax.set_xlabel('Actual Values')
+                ax.set_ylabel('Predicted Values')
+                ax.set_title(f'Predictions vs Actual (R² = {r2:.3f}, RMSE = {rmse:.3f})')
+                ax.grid(True)
+                
+                # Log the figure to CometML
+                self.logger.experiment.log_figure(figure=fig, figure_name="Predictions_vs_Actual")
+                plt.close(fig)
+        
+        # Log metrics
         self.log('mse', mse, sync_dist=True)
         self.log('rmse', rmse, sync_dist=True)
         self.log('mae', mae, sync_dist=True)
