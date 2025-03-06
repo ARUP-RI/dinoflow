@@ -13,6 +13,8 @@ from torchmetrics.classification import BinaryPrecisionRecallCurve, BinaryF1Scor
 from torchmetrics.aggregation import MeanMetric, SumMetric
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import CometLogger
+import matplotlib.pyplot as plt
+from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
 from torchmetrics.regression import MeanSquaredError, MeanAbsoluteError, R2Score
 
 from torch.utils.data import DataLoader, Dataset
@@ -117,8 +119,8 @@ class ClassificationModel(pl.LightningModule):
         # Gather predictions and labels from all processes
         if self.trainer.world_size > 1:
             # For distributed training
-            gathered_preds = self.all_gather(torch.cat(self.val_preds, dim=0).float())
-            gathered_labels = self.all_gather(torch.cat(self.val_labels, dim=0).float())
+            gathered_preds = self.all_gather(torch.cat(self.val_preds).float()).flatten()
+            gathered_labels = self.all_gather(torch.cat(self.val_labels).int()).flatten()
             
             # Reshape if needed
             if gathered_preds.dim() > 2:
@@ -127,15 +129,18 @@ class ClassificationModel(pl.LightningModule):
                 gathered_labels = gathered_labels.reshape(-1)
         else:
             # For single process
-            gathered_preds = torch.cat(self.val_preds, dim=0).float()
-            gathered_labels = torch.cat(self.val_labels, dim=0).float()
-        
+            gathered_preds = torch.cat(self.val_preds).float()
+            gathered_labels = torch.cat(self.val_labels).int()
+ 
+        # These get set in the main process, but for logging we are required to do that in every process, so set
+        # some defaults here for every process ...
+        best_f1 = float("NaN")
+        best_precision = float("NaN")
+        threshold = float("NaN")
+        best_recall = float("NaN")
         # Only create and log the plot on the main process
         if self.trainer.is_global_zero and isinstance(self.logger, CometLogger):
-            import matplotlib.pyplot as plt
-            from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
-            
-            # Create ROC curve
+           
             fpr, tpr, _ = roc_curve(gathered_labels.cpu().numpy(), gathered_preds.cpu().numpy())
             roc_auc = auc(fpr, tpr)
             
@@ -180,19 +185,20 @@ class ClassificationModel(pl.LightningModule):
             self.logger.experiment.log_figure(figure=fig, figure_name="PR_Curve", step=self.current_epoch)
             plt.close(fig)
 
-        self.log('precision', best_precision, sync_dist=True )
+        # We only want to log these from the main process (where self.trainer.is_global_zero is true), and it will hang
+        # if we have sync_dict=True since we are not syncing anything across processes here
+        self.log('recall', best_recall)
+        self.log('fscore', best_f1)
+        self.log('threshold', threshold)
+        self.log('precision', best_precision)
+
+        # Process syncing is handled by lightning for these, and we want sync_dist=True to make sure things are synced across processes 
         self.log('accuracy', accuracy, sync_dist=True)
-        self.log('recall', best_recall, sync_dist=True)
-        self.log('fscore', best_f1, sync_dist=True)
-        self.log('threshold', threshold, sync_dist=True)
         self.log('val_loss', self.validation_loss_mean.compute(), sync_dist=True)
         self.log('training_loss', self.training_loss_mean.compute(), sync_dist=True)
         self.log('learning_rate', lr)
     
         self.accuracy.reset()
-        self.precision.reset()
-        self.recall.reset()
-        self.f1score.reset()
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
@@ -501,9 +507,9 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
     btm.t_backbone = t_backbone
     btm.m_backbone = m_backbone
     if mode == 'binary':
-        model = ClassificationModel(btm, emit_predictions=True)
+        model = ClassificationModel(btm, emit_predictions=False)
     elif mode == 'regression':
-        model = RegressionModel(btm, emit_predictions=True)
+        model = RegressionModel(btm, emit_predictions=False)
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
@@ -531,9 +537,9 @@ def predict(checkpoint: str, test_labels: str, labelkey:str, dataroot: str = "."
                                         heads=backbone_conf['heads']).to(DEVICE)
     classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
     if mode == 'binary':
-        model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier, emit_predictions=True)  
+        model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier, emit_predictions=False)  
     elif mode == 'regression':
-        model = RegressionModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier, emit_predictions=True)  
+        model = RegressionModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier, emit_predictions=False)  
     else:
         raise ValueError(f"Unknown mode: {mode}")
     model.eval()
