@@ -47,6 +47,7 @@ class ClassificationHead(nn.Module):
     def forward(self, x):
         return self.layers(x)
     
+
 class CombinedModel(nn.Module):
     def __init__(self, backbone, classifier):
         super().__init__()
@@ -58,7 +59,7 @@ class CombinedModel(nn.Module):
 
 
 class ClassificationModel(pl.LightningModule):
-    def __init__(self, model, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False):
+    def __init__(self, model, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False, ckpt_params=None):
         super().__init__()
         self.model = model #
         self.min_lr = min_lr
@@ -70,6 +71,8 @@ class ClassificationModel(pl.LightningModule):
         self.training_loss_mean = MeanMetric()
         self.validation_loss_mean = MeanMetric()
         self.emit_predictions = emit_predictions
+        if ckpt_params is not None:
+            self.save_hyperparameters(ckpt_params)
         
         # Lists to collect predictions and labels
         self.val_preds = []
@@ -207,7 +210,7 @@ class ClassificationModel(pl.LightningModule):
 
 
 class RegressionModel(pl.LightningModule):
-    def __init__(self, model, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False):
+    def __init__(self, model, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False, ckpt_params=None):
         super().__init__()
         self.model = model
         self.min_lr = min_lr
@@ -215,7 +218,8 @@ class RegressionModel(pl.LightningModule):
         self.warmup_iters = warmup_iters
         self.lr_decay_iters = lr_decay_iters
         self.emit_predictions = emit_predictions
-        
+        if ckpt_params is not None:
+            self.save_hyperparameters(ckpt_params)
         # Regression metrics
         self.mse = MeanSquaredError()
         self.rmse = MeanSquaredError(squared=False)  # RMSE is sqrt of MSE
@@ -423,6 +427,16 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     trainer.fit(model, trainloader, valloader)
 
 
+def munge_state_dict(state_dict):
+    """
+    Required to load the state dict from a checkpoint into a new model
+    """
+    new_state_dict = {}
+    for key, value in state_dict.items():
+        new_key = key.replace('model.', '')
+        new_state_dict[new_key] = value
+    return new_state_dict
+
 @app.command()
 def train(run_name, train_labels, test_labels, backbone: str, conf: str, tube_type: str = "", dataroot: str = "/", positive_repeat_factor: int = 1, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, mode: str = 'binary') :
     """
@@ -507,9 +521,9 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
     btm.t_backbone = t_backbone
     btm.m_backbone = m_backbone
     if mode == 'binary':
-        model = ClassificationModel(btm, emit_predictions=False)
+        model = ClassificationModel(btm, emit_predictions=False, ckpt_params=modelconf)
     elif mode == 'regression':
-        model = RegressionModel(btm, emit_predictions=False)
+        model = RegressionModel(btm, emit_predictions=False, ckpt_params=modelconf)
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
@@ -522,27 +536,22 @@ def predict(checkpoint: str, test_labels: str, labelkey:str, dataroot: str = "."
     """
     Predict the labels for the test set
     """
-    logger.info(f"Loading checkpoint from {checkpoint}")
-    backbone_conf = {
-        "num_features": 13,
-        "model_dim": 512,
-        "layers": 10,
-        "heads": 4,
-        "hidden_dim": 256,
-        "projection_dim": 256
+    # In the future we'll be able to load the modelconf from the checkpoint but older models dont save it
+    modelconf = {
+        'model_dim': 512,
+        'heads': 4,
+        'layers': 10,
     }
-    backbone = TubeEncoder(num_features=backbone_conf['num_features'],
-                                        model_embed_dim=backbone_conf['model_dim'],
-                                        layers=backbone_conf['layers'],
-                                        heads=backbone_conf['heads']).to(DEVICE)
-    classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
-    if mode == 'binary':
-        model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier, emit_predictions=False)  
-    elif mode == 'regression':
-        model = RegressionModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier, emit_predictions=False)  
-    else:
-        raise ValueError(f"Unknown mode: {mode}")
+    ckpt = torch.load(checkpoint, weights_only=False)
+    ckpt['state_dict'] = munge_state_dict(ckpt['state_dict'])
+    model = BTMTubes(num_features=13,
+                    model_embed_dim=modelconf['model_dim'],
+                    backbone_heads=modelconf['heads'],
+                    backbone_layers=modelconf['layers'],
+                    output_classes=1)
+    model.load_state_dict(ckpt['state_dict'])
     model.eval()
+    
     testdata = TubeData(test_labels, data_root=dataroot, labelkey=labelkey, tubes_to_return=["m"], events_to_return=int(events))
     testloader = DataLoader(testdata, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(testloader.dataset)} samples for test")
