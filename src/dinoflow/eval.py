@@ -117,8 +117,8 @@ class ClassificationModel(pl.LightningModule):
         # Gather predictions and labels from all processes
         if self.trainer.world_size > 1:
             # For distributed training
-            gathered_preds = self.all_gather(torch.cat(self.val_preds).float())
-            gathered_labels = self.all_gather(torch.cat(self.val_labels).float())
+            gathered_preds = self.all_gather(torch.cat(self.val_preds, dim=0).float())
+            gathered_labels = self.all_gather(torch.cat(self.val_labels, dim=0).float())
             
             # Reshape if needed
             if gathered_preds.dim() > 2:
@@ -127,8 +127,8 @@ class ClassificationModel(pl.LightningModule):
                 gathered_labels = gathered_labels.reshape(-1)
         else:
             # For single process
-            gathered_preds = torch.cat(self.val_preds).float()
-            gathered_labels = torch.cat(self.val_labels).float()
+            gathered_preds = torch.cat(self.val_preds, dim=0).float()
+            gathered_labels = torch.cat(self.val_labels, dim=0).float()
         
         # Only create and log the plot on the main process
         if self.trainer.is_global_zero and isinstance(self.logger, CometLogger):
