@@ -91,28 +91,30 @@ class MLP(nn.Module):
             y = x + y
         return y
 
-
+        
+        
 
 class BTMTubes(nn.Module):
     """
     Combines the B, T, and M backbones and generates a final prediction
     """
-    def __init__(self, num_features, model_embed_dim, backbone_heads, backbone_layers, output_classes):
+    def __init__(self, num_features, model_embed_dim, backbone_heads, backbone_layers, output_classes, include_classifier=True):
         super().__init__()
         self.b_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads)
         self.t_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads)
         self.m_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads)
-        self.b_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
-        self.t_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
-        self.m_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
 
-        self.combined = nn.Sequential(
-            nn.Linear(model_embed_dim * 3, model_embed_dim),
-            nn.GELU(),
-            nn.Linear(model_embed_dim, model_embed_dim),
-            nn.GELU(),
-            nn.Linear(model_embed_dim, output_classes),
-        )
+        if include_classifier:
+            self.b_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
+            self.t_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
+            self.m_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
+            self.combined = nn.Sequential(
+                nn.Linear(model_embed_dim * 3, model_embed_dim),
+                nn.GELU(),
+                nn.Linear(model_embed_dim, model_embed_dim),
+                nn.GELU(),
+                nn.Linear(model_embed_dim, output_classes),
+            )
 
 
     def forward(self, eventdict):
@@ -123,9 +125,10 @@ class BTMTubes(nn.Module):
         b_out = self.b_backbone(b_events)
         t_out = self.t_backbone(t_events)
         m_out = self.m_backbone(m_events)
-        b_out = self.b_mlp(b_out)
-        t_out = self.t_mlp(t_out)
-        m_out = self.m_mlp(m_out)
+        if self.include_classifier:
+            b_out = self.b_mlp(b_out)
+            t_out = self.t_mlp(t_out)
+            m_out = self.m_mlp(m_out)
         x = self.combined(torch.cat((b_out, t_out, m_out), dim=1))
         return x
 
