@@ -58,7 +58,7 @@ class CombinedModel(nn.Module):
         return self.classifier(self.backbone(x.float()))
 
 
-class ClassificationModel(pl.LightningModule):
+class BinaryClassificationModel(pl.LightningModule):
     def __init__(self, model, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False, ckpt_params=None):
         super().__init__()
         self.model = model #
@@ -67,7 +67,6 @@ class ClassificationModel(pl.LightningModule):
         self.warmup_iters = warmup_iters
         self.lr_decay_iters = lr_decay_iters
         self.accuracy = BinaryAccuracy()
-
         self.training_loss_mean = MeanMetric()
         self.validation_loss_mean = MeanMetric()
         self.emit_predictions = emit_predictions
@@ -202,6 +201,139 @@ class ClassificationModel(pl.LightningModule):
         self.log('learning_rate', lr)
     
         self.accuracy.reset()
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
+        lrschedule = util.WarmupCosineLRScheduler(optimizer, self.max_lr, self.min_lr, self.warmup_iters, self.lr_decay_iters)
+        return [optimizer], [lrschedule]
+
+
+class ClassificationModel(pl.LightningModule):
+    def __init__(self, model, num_classes, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False, ckpt_params=None):
+        super().__init__()
+        self.model = model
+        self.num_classes = num_classes
+        self.min_lr = min_lr
+        self.max_lr = max_lr
+        self.warmup_iters = warmup_iters
+        self.lr_decay_iters = lr_decay_iters
+        
+        # Multi-class metrics
+        from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score
+        self.accuracy = MulticlassAccuracy(num_classes=num_classes)
+        self.f1_score = MulticlassF1Score(num_classes=num_classes)
+        
+        self.training_loss_mean = MeanMetric()
+        self.validation_loss_mean = MeanMetric()
+        self.emit_predictions = emit_predictions
+        if ckpt_params is not None:
+            self.save_hyperparameters(ckpt_params)
+        
+        # Lists to collect predictions and labels
+        self.val_preds = []
+        self.val_labels = []
+
+    def forward(self, x):
+        return self.model(x)
+    
+    def training_step(self, batch, batch_idx):
+        x, rowinfo = batch
+        labels = rowinfo['label']
+        preds = self(x)
+        loss = torch.nn.functional.cross_entropy(preds, labels.long())
+        self.training_loss_mean.update(loss)
+        return loss
+    
+    def on_validation_epoch_start(self):
+        # Clear the lists at the start of validation
+        self.val_preds = []
+        self.val_labels = []
+    
+    def validation_step(self, batch, batch_idx):
+        x, rowinfo = batch
+        labels = rowinfo['label']
+        accs = rowinfo['ACCESSION']
+        preds = self(x)
+        loss = torch.nn.functional.cross_entropy(preds, labels.long())
+        
+        # Get class predictions
+        pred_classes = torch.argmax(preds, dim=1)
+        
+        # Store predictions and labels for later use
+        self.val_preds.append(pred_classes.detach())
+        self.val_labels.append(labels.detach())
+        
+        if self.emit_predictions:
+            for p, l, a in zip(pred_classes, labels, accs):
+                print(f"{a}\t{p.item()}\t{l.item()}")
+        
+        # Update metrics
+        self.accuracy(preds, labels.long())
+        self.f1_score(preds, labels.long())
+        self.validation_loss_mean.update(loss)
+
+    def on_validation_epoch_end(self):
+        lrsched = self.lr_schedulers()
+        lr = lrsched.get_last_lr()[0]
+        accuracy = self.accuracy.compute()
+        f1 = self.f1_score.compute()
+        
+        # Gather predictions and labels from all processes
+        if self.trainer.world_size > 1:
+            # For distributed training
+            gathered_preds = self.all_gather(torch.cat(self.val_preds))
+            gathered_labels = self.all_gather(torch.cat(self.val_labels))
+            
+            # Reshape if needed
+            if gathered_preds.dim() > 1 and gathered_preds.size(0) == self.trainer.world_size:
+                gathered_preds = gathered_preds.view(-1)
+            if gathered_labels.dim() > 1 and gathered_labels.size(0) == self.trainer.world_size:
+                gathered_labels = gathered_labels.view(-1)
+        else:
+            # For single process
+            gathered_preds = torch.cat(self.val_preds)
+            gathered_labels = torch.cat(self.val_labels)
+        
+        # Only create and log the confusion matrix on the main process
+        if self.trainer.is_global_zero and isinstance(self.logger, CometLogger):
+            from sklearn.metrics import confusion_matrix
+            import seaborn as sns
+            
+            # Create confusion matrix
+            cm = confusion_matrix(
+                gathered_labels.cpu().numpy(), 
+                gathered_preds.cpu().numpy(),
+                labels=range(self.num_classes)
+            )
+            
+            # Plot confusion matrix
+            fig, ax = plt.subplots(figsize=(10, 8))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
+            ax.set_xlabel('Predicted labels')
+            ax.set_ylabel('True labels')
+            ax.set_title('Confusion Matrix')
+            
+            # If we have more than 10 classes, don't show all tick labels
+            if self.num_classes <= 10:
+                ax.set_xticks(np.arange(self.num_classes) + 0.5)
+                ax.set_yticks(np.arange(self.num_classes) + 0.5)
+                ax.set_xticklabels(range(self.num_classes))
+                ax.set_yticklabels(range(self.num_classes))
+            
+            # Log the confusion matrix to CometML
+            self.logger.experiment.log_figure(figure=fig, figure_name="Confusion_Matrix", step=self.current_epoch)
+            plt.close(fig)
+
+        # Log metrics
+        self.log('accuracy', accuracy, sync_dist=True)
+        self.log('f1_score', f1, sync_dist=True)
+        self.log('val_loss', self.validation_loss_mean.compute(), sync_dist=True)
+        self.log('training_loss', self.training_loss_mean.compute(), sync_dist=True)
+        self.log('learning_rate', lr)
+        
+        # Reset metrics
+        self.accuracy.reset()
+        self.f1_score.reset()
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
@@ -438,7 +570,7 @@ def munge_state_dict(state_dict):
     return new_state_dict
 
 @app.command()
-def train(run_name, train_labels, test_labels, backbone: str, conf: str, tube_type: str = "", dataroot: str = "/", positive_repeat_factor: int = 1, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, mode: str = 'binary') :
+def train(run_name, train_labels, test_labels, backbone: str, conf: str, tube_type: str = "", dataroot: str = "/", positive_repeat_factor: int = 1, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, mode: str = 'binary', num_classes: int = 2) :
     """
     Evaluate the model on the test set
     """
@@ -448,11 +580,13 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, tube_ty
 
     logger.info(f"Loading backbone from {backbone}")
     backbone, modelconf = load_checkpoint(backbone)
-    classifier = ClassificationHead(backbone.cls_token.shape[-1], 1)
+    classifier = ClassificationHead(backbone.cls_token.shape[-1], 1 if mode == 'binary' or mode == 'regression' else num_classes)
     combined = CombinedModel(backbone, classifier)
 
     if mode == 'binary':
-        model = ClassificationModel(combined, emit_predictions=True)
+        model = BinaryClassificationModel(combined, emit_predictions=True)
+    elif mode == 'multiclass':
+        model = ClassificationModel(combined, num_classes=num_classes, emit_predictions=True)
     elif mode == 'regression':
         model = RegressionModel(combined, emit_predictions=True)
         assert positive_repeat_factor == 1
@@ -468,7 +602,12 @@ def train(run_name, train_labels, test_labels, backbone: str, conf: str, tube_ty
 
     if checkpoint is not None:
         logger.info(f"Loading full model checkpoint from {checkpoint}")
-        model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier)    
+        if mode == 'binary':
+            model = BinaryClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier)
+        elif mode == 'multiclass':
+            model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier, num_classes=num_classes)
+        elif mode == 'regression':
+            model = RegressionModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier)
     
     if freeze_backbone:
         logger.info("Freezing backbone")
@@ -492,7 +631,8 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
                 batch_size: int = 16,
                 epochs: int = 50,
                 mode:str = 'binary',
-                positive_repeat_factor: int = 1):
+                positive_repeat_factor: int = 1,
+                num_classes: int = 2):
     # Helps with too many open files errors?
     torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -511,17 +651,22 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
     for p in m_backbone.parameters():
         p.requires_grad = False
 
+    output_classes = 1 if mode == 'binary' or mode == 'regression' else num_classes
+    
     btm = BTMTubes(num_features=13,
                     model_embed_dim=modelconf['model_dim'],
                     backbone_heads=modelconf['heads'],
                     backbone_layers=modelconf['layers'],
-                    output_classes=1)
+                    output_classes=output_classes)
 
     btm.b_backbone = b_backbone
     btm.t_backbone = t_backbone
     btm.m_backbone = m_backbone
+    
     if mode == 'binary':
-        model = ClassificationModel(btm, emit_predictions=False, ckpt_params=modelconf)
+        model = BinaryClassificationModel(btm, emit_predictions=False, ckpt_params=modelconf)
+    elif mode == 'multiclass':
+        model = ClassificationModel(btm, num_classes=num_classes, emit_predictions=False, ckpt_params=modelconf)
     elif mode == 'regression':
         model = RegressionModel(btm, emit_predictions=False, ckpt_params=modelconf)
     else:
