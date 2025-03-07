@@ -20,6 +20,8 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 
+app = typer.Typer(pretty_exceptions_show_locals=False)
+
 def load_btm_model(b_ckpt, t_ckpt, m_ckpt, output_classes):
     b_backbone, modelconf = load_checkpoint(b_ckpt)
     t_backbone, _ = load_checkpoint(t_ckpt)
@@ -106,13 +108,13 @@ def main(run_name, train_labels, test_labels,
 
     torch.set_float32_matmul_precision('medium')
     
-    traindata = TubeData(train_labels, events_to_return=int(events), labelkey=labelkey, dataroot=dataroot)
+    traindata = TubeData(train_labels, events_to_return=int(events), labelkey=labelkey, data_root=dataroot)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
     logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
     logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
 
-    valdata = TubeData(test_labels, events_to_return=int(events), labelkey=labelkey, dataroot=dataroot)
+    valdata = TubeData(test_labels, events_to_return=int(events), labelkey=labelkey, data_root=dataroot)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
     logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
