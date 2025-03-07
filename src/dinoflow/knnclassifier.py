@@ -50,6 +50,8 @@ def load_btm_model(b_ckpt, t_ckpt, m_ckpt, output_classes):
     
     # Move model to the appropriate device
     btm = btm.to(DEVICE)
+    if "cuda" in DEVICE.type:
+        btm = torch.nn.DataParallel(btm)
     
     return btm
 
@@ -68,8 +70,8 @@ def fit_knn(model, trainloader):
             train_features.append(features.float().cpu())
             train_labels.append(labels)
 
-    train_features = torch.cat(train_features, dim=0).flatten().float().numpy()
-    train_labels = torch.cat(train_labels, dim=0).flatten().int().numpy()
+    train_features = torch.cat(train_features, dim=0).float().numpy()
+    train_labels = torch.cat(train_labels, dim=0).int().numpy()
 
     logger.info(f"Training KNN classifier with {len(train_features)} samples")
     knn = KNeighborsClassifier(n_neighbors=3)
@@ -93,8 +95,8 @@ def predict_knn(knn, model, testloader):
             test_features.append(features.cpu())
             test_labels.append(labels)
 
-    test_features = torch.cat(test_features, dim=0).flatten().float().numpy()
-    test_labels = torch.cat(test_labels, dim=0).flatten().float().numpy()
+    test_features = torch.cat(test_features, dim=0).float().numpy()
+    test_labels = torch.cat(test_labels, dim=0).int().numpy()
     preds = knn.predict(test_features)
     # Assess multiclass accuracy, precision, recall, f1 score using sklearn metrics
     acc = accuracy_score(test_labels, preds)
