@@ -93,6 +93,7 @@ def main(run_name, train_labels, test_labels,
           b_ckpt, t_ckpt, m_ckpt,
           num_classes: int = 0,
           labelkey: str = "label",
+          dataroot: str = ".",
           batch_size: int = 16,
           events: int = 4096,
           ) :
@@ -105,13 +106,13 @@ def main(run_name, train_labels, test_labels,
 
     torch.set_float32_matmul_precision('medium')
     
-    traindata = TubeData(train_labels, events_to_return=int(events), labelkey=labelkey)
+    traindata = TubeData(train_labels, events_to_return=int(events), labelkey=labelkey, dataroot=dataroot)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
     logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
     logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
 
-    valdata = TubeData(test_labels, events_to_return=int(events), labelkey=labelkey)
+    valdata = TubeData(test_labels, events_to_return=int(events), labelkey=labelkey, dataroot=dataroot)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
     logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
