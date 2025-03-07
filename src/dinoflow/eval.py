@@ -207,6 +207,19 @@ class BinaryClassificationModel(pl.LightningModule):
         lrschedule = util.WarmupCosineLRScheduler(optimizer, self.max_lr, self.min_lr, self.warmup_iters, self.lr_decay_iters)
         return [optimizer], [lrschedule]
 
+    # Add these methods to specify checkpoint monitoring preferences
+    @property
+    def checkpoint_monitor(self):
+        return 'fscore'
+    
+    @property
+    def checkpoint_mode(self):
+        return 'max'
+        
+    @property
+    def comet_project(self):
+        return 'dinoflow-classifier'
+
 
 class ClassificationModel(pl.LightningModule):
     def __init__(self, model, num_classes, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False, ckpt_params=None):
@@ -339,6 +352,19 @@ class ClassificationModel(pl.LightningModule):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
         lrschedule = util.WarmupCosineLRScheduler(optimizer, self.max_lr, self.min_lr, self.warmup_iters, self.lr_decay_iters)
         return [optimizer], [lrschedule]
+
+    # Add these methods to specify checkpoint monitoring preferences
+    @property
+    def checkpoint_monitor(self):
+        return 'f1_score'
+    
+    @property
+    def checkpoint_mode(self):
+        return 'max'
+        
+    @property
+    def comet_project(self):
+        return 'dinoflow-classifier'
 
 
 class RegressionModel(pl.LightningModule):
@@ -473,6 +499,19 @@ class RegressionModel(pl.LightningModule):
         lrschedule = util.WarmupCosineLRScheduler(optimizer, self.max_lr, self.min_lr, self.warmup_iters, self.lr_decay_iters)
         return [optimizer], [lrschedule]
 
+    # Add these methods to specify checkpoint monitoring preferences
+    @property
+    def checkpoint_monitor(self):
+        return 'rmse'
+    
+    @property
+    def checkpoint_mode(self):
+        return 'min'
+        
+    @property
+    def comet_project(self):
+        return 'dinoflow-viability'
+
 
 def load_featmeans_stds(conf, tube_type):
     if tube_type == 't':
@@ -507,32 +546,30 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     val_transforms = compose([
     ])
 
-    checkpoint_monitor_mode = 'min'
-    checkpoint_monitor_val = 'val_loss'
-    comet_project = 'dinoflow-classifier'
+    # Use the model's specified checkpoint monitor values instead of hardcoding them
+    checkpoint_monitor_val = model.checkpoint_monitor
+    checkpoint_monitor_mode = model.checkpoint_mode
+    comet_project = model.comet_project
 
     traindata = TubeData(train_labels, tubes_to_return=tubes, events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=train_transforms)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=8)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
-    if isinstance(model, ClassificationModel):
+    
+    # Check if we have any positive samples for classification models
+    if hasattr(traindata, 'positive_negative_samples'):
         logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
         logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
-        checkpoint_monitor_val = 'fscore'
-        checkpoint_monitor_mode = 'max'
-        comet_project = 'dinoflow-classifier'
         assert len(traindata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
-    else:
-        checkpoint_monitor_val = 'rmse'
-        checkpoint_monitor_mode = 'min'
-        comet_project = 'dinoflow-viability'
+    
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)    
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
-
 
     valdata = TubeData(test_labels, tubes_to_return=tubes, events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=val_transforms)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=8)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
-    if isinstance(model, ClassificationModel):
+    
+    # Check if we have any positive samples for classification models in the validation set
+    if hasattr(valdata, 'positive_negative_samples'):
         logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
         logger.info(f"Negative samples: {len(valdata.positive_negative_samples()[1])}")
         assert len(valdata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
