@@ -64,6 +64,9 @@ def fit_knn(model, trainloader):
         x, rowinfo = batch
         labels = rowinfo['label']
         logger.info(f"Batch {i} of {len(trainloader)}")
+        for k, v in x.items():
+            if isinstance(v, torch.Tensor):
+                x[k] = v.to(DEVICE)
         with torch.no_grad():
             features = model(x)
             # Move features back to CPU for sklearn
@@ -89,6 +92,9 @@ def predict_knn(knn, model, testloader):
         x, rowinfo = batch
         labels = rowinfo['label']
         logger.info(f"Predicting batch {i} of {len(testloader)}")
+        for k, v in x.items():
+            if isinstance(v, torch.Tensor):
+                x[k] = v.to(DEVICE)
         with torch.no_grad():
             features = model(x)
             # Move features back to CPU for sklearn
