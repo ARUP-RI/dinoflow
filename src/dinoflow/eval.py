@@ -552,16 +552,16 @@ def predict(checkpoint: str, test_labels: str, labelkey:str, dataroot: str = "."
     model.load_state_dict(ckpt['state_dict'])
     model.eval()
     
-    testdata = TubeData(test_labels, data_root=dataroot, labelkey=labelkey, tubes_to_return=["m"], events_to_return=int(events))
+    testdata = TubeData(test_labels, data_root=dataroot, labelkey=labelkey, tubes_to_return=["b", "t", "m"], events_to_return=int(events))
     testloader = DataLoader(testdata, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(testloader.dataset)} samples for test")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     with torch.inference_mode():
         for b, (batch, rowdict) in enumerate(testloader):
-            i = 0
             labels = rowdict['label']
-            preds = model(batch.to(device).float())
+            i = 0
+            preds = model(batch)
             preds = F.sigmoid(preds)
             for p, l in zip(preds, labels):
                 idx = b * batch_size + i

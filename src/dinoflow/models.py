@@ -116,9 +116,9 @@ class BTMTubes(nn.Module):
 
 
     def forward(self, eventdict):
-        b_events = eventdict['b']
-        t_events = eventdict['t']
-        m_events = eventdict['m']
+        b_events = eventdict['b'].float()
+        t_events = eventdict['t'].float()
+        m_events = eventdict['m'].float()
         b_out = self.b_backbone(b_events)
         t_out = self.t_backbone(t_events)
         m_out = self.m_backbone(m_events)
