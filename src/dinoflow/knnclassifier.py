@@ -19,6 +19,11 @@ from dinoflow.data import compose, shift, scale, noise, standardize_range
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
+app = typer.Typer(pretty_exceptions_show_locals=False)
+
+
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s]   %(levelname)s   %(message)s')
+
 
 app = typer.Typer(pretty_exceptions_show_locals=False)
 
@@ -51,6 +56,7 @@ def fit_knn(model, trainloader):
     for i, batch in enumerate(trainloader):
         x, rowinfo = batch
         labels = rowinfo['label']
+        logger.info(f"Batch {i} of {len(trainloader)}")
         with torch.no_grad():
             features = model(x)
             train_features.append(features)
@@ -59,6 +65,7 @@ def fit_knn(model, trainloader):
     train_features = torch.cat(train_features, dim=0).flatten().float().numpy()
     train_labels = torch.cat(train_labels, dim=0).flatten().float().numpy()
 
+    logger.info(f"Training KNN classifier with {len(train_features)} samples")
     knn = KNeighborsClassifier(n_neighbors=3)
     knn.fit(train_features, train_labels)
 
@@ -73,6 +80,7 @@ def predict_knn(knn, testloader):
     for i, batch in enumerate(testloader):
         x, rowinfo = batch
         labels = rowinfo['label']
+        logger.info(f"Predicting batch {i} of {len(testloader)}")
         with torch.no_grad():
             features = model(x)
             test_features.append(features)
