@@ -1,4 +1,3 @@
-
 import logging
 logger = logging.getLogger(__name__)
 
@@ -24,6 +23,9 @@ app = typer.Typer(pretty_exceptions_show_locals=False)
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s]   %(levelname)s   %(message)s')
 
+# Define device globally
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def load_btm_model(b_ckpt, t_ckpt, m_ckpt, output_classes):
     b_backbone, modelconf = load_checkpoint(b_ckpt)
@@ -43,7 +45,10 @@ def load_btm_model(b_ckpt, t_ckpt, m_ckpt, output_classes):
     btm.b_backbone = b_backbone
     btm.t_backbone = t_backbone
     btm.m_backbone = m_backbone
-
+    
+    # Move model to the appropriate device
+    btm = btm.to(DEVICE)
+    
     return btm
 
 def fit_knn(model, trainloader):
@@ -57,11 +62,12 @@ def fit_knn(model, trainloader):
         logger.info(f"Batch {i} of {len(trainloader)}")
         with torch.no_grad():
             features = model(x)
-            train_features.append(features)
+            # Move features back to CPU for sklearn
+            train_features.append(features.float().cpu())
             train_labels.append(labels)
 
     train_features = torch.cat(train_features, dim=0).flatten().float().numpy()
-    train_labels = torch.cat(train_labels, dim=0).flatten().float().numpy()
+    train_labels = torch.cat(train_labels, dim=0).flatten().int().numpy()
 
     logger.info(f"Training KNN classifier with {len(train_features)} samples")
     knn = KNeighborsClassifier(n_neighbors=3)
@@ -70,7 +76,7 @@ def fit_knn(model, trainloader):
     return knn
 
 
-def predict_knn(knn, testloader):
+def predict_knn(knn, model, testloader):
     """Iterate over the test set and extract the features from the model, then predict the labels"""
     test_features = []
     test_labels = []
@@ -81,10 +87,12 @@ def predict_knn(knn, testloader):
         logger.info(f"Predicting batch {i} of {len(testloader)}")
         with torch.no_grad():
             features = model(x)
-            test_features.append(features)
+            # Move features back to CPU for sklearn
+            test_features.append(features.cpu())
             test_labels.append(labels)
 
     test_features = torch.cat(test_features, dim=0).flatten().float().numpy()
+    test_labels = torch.cat(test_labels, dim=0).flatten().float().numpy()
     preds = knn.predict(test_features)
     # Assess multiclass accuracy, precision, recall, f1 score using sklearn metrics
     acc = accuracy_score(test_labels, preds)
@@ -94,7 +102,6 @@ def predict_knn(knn, testloader):
 
     return acc, prec, rec, f1
     
-
 
 @app.command()
 def main(run_name, train_labels, test_labels,
@@ -110,6 +117,7 @@ def main(run_name, train_labels, test_labels,
     """
     assert num_classes > 1, "num_classes must be greater than 1"
     
+    logger.info(f"Using device: {DEVICE}")
     model = load_btm_model(b_ckpt, t_ckpt, m_ckpt, 1)
 
     torch.set_float32_matmul_precision('medium')
@@ -128,7 +136,7 @@ def main(run_name, train_labels, test_labels,
 
     knn = fit_knn(model, trainloader)
 
-    acc, prec, rec, f1 = predict_knn(knn, valloader)
+    acc, prec, rec, f1 = predict_knn(knn, model, testloader=valloader)
     logger.info(f"Accuracy: {acc}")
     logger.info(f"Precision: {prec}")
     logger.info(f"Recall: {rec}")
