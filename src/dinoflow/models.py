@@ -119,11 +119,7 @@ class BTMTubes(nn.Module):
         b_events = eventdict['b'].float()
         t_events = eventdict['t'].float()
         m_events = eventdict['m'].float()
-        # Move events to same device as model
-        model_device = next(self.parameters()).device
-        b_events = b_events.to(model_device)
-        t_events = t_events.to(model_device)
-        m_events = m_events.to(model_device)
+
         b_out = self.b_backbone(b_events)
         t_out = self.t_backbone(t_events)
         m_out = self.m_backbone(m_events)
