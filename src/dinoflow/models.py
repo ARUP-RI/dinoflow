@@ -16,6 +16,30 @@ def load_checkpoint(path, device=None):
     return teacher.tube_encoder, modelconf
 
 
+class SwishGLUTransformerEncoderLayer(nn.TransformerEncoderLayer):
+    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.0, 
+                 layer_norm_eps=1e-5, batch_first=False, beta=1.0):
+        # Initialize with a dummy activation that won't be used
+        super().__init__(d_model=d_model, nhead=nhead, 
+                         dim_feedforward=dim_feedforward,
+                         dropout=dropout, layer_norm_eps=layer_norm_eps,
+                         batch_first=batch_first,
+                         activation='relu')  # This won't matter
+        
+        # Replace the feed-forward network with SwishGLU
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.linear_gate = nn.Linear(d_model, dim_feedforward)
+        self.beta = beta
+        # Keep linear2 as the output projection
+    
+    def _ff_block(self, x):
+        main_path = self.linear1(x)
+        gate = self.linear_gate(x)
+        swish = main_path * torch.sigmoid(self.beta * main_path)
+        x = swish * gate
+        return self.dropout(self.linear2(x))
+
+
 class TubeEncoder(nn.Module):
     
     def __init__(self, num_features, model_embed_dim, layers, heads, d_ff=2048):
@@ -26,11 +50,11 @@ class TubeEncoder(nn.Module):
         self.heads = heads
         self.d_ff = d_ff
         self.fc = nn.Linear(num_features, model_embed_dim)
-        encoderlayer = nn.TransformerEncoderLayer(d_model=model_embed_dim,
+        encoderlayer = SwishGLUTransformerEncoderLayer(d_model=model_embed_dim,
                                                 nhead=heads,
                                                 dim_feedforward=d_ff,
                                                 batch_first=True,
-                                                activation='gelu',
+                                                beta=1.0,
                                                 dropout=0.0)
         self.encoder = nn.TransformerEncoder(encoderlayer, num_layers=layers)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, model_embed_dim))
