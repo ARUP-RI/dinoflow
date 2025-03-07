@@ -18,15 +18,17 @@ def load_checkpoint(path, device=None):
 
 class TubeEncoder(nn.Module):
     
-    def __init__(self, num_features, model_embed_dim, layers, heads):
+    def __init__(self, num_features, model_embed_dim, layers, heads, d_ff=2048):
         super().__init__()
         self.model_dim = model_embed_dim
         self.num_features = num_features
         self.layers = layers
         self.heads = heads
+        self.d_ff = d_ff
         self.fc = nn.Linear(num_features, model_embed_dim)
         encoderlayer = nn.TransformerEncoderLayer(d_model=model_embed_dim,
                                                 nhead=heads,
+                                                dim_feedforward=d_ff,
                                                 batch_first=True,
                                                 activation='gelu',
                                                 dropout=0.0)
@@ -58,9 +60,9 @@ class ProjectionHead(nn.Module):
         return x
 
 class TubeEncoderWithProjection(nn.Module):
-    def __init__(self, num_features, model_embed_dim, layers, heads, hidden_dim, projection_dim):
+    def __init__(self, num_features, model_embed_dim, layers, heads, d_ff, hidden_dim, projection_dim):
         super().__init__()
-        self.tube_encoder = TubeEncoder(num_features, model_embed_dim, layers, heads)
+        self.tube_encoder = TubeEncoder(num_features, model_embed_dim, layers, heads, d_ff)
         self.projection_head = ProjectionHead(model_embed_dim, hidden_dim, projection_dim)
 
     def forward(self, x):
@@ -91,19 +93,17 @@ class MLP(nn.Module):
             y = x + y
         return y
 
-        
-        
 
 class BTMTubes(nn.Module):
     """
     Combines the B, T, and M backbones and generates a final prediction
     """
-    def __init__(self, num_features, model_embed_dim, backbone_heads, backbone_layers, output_classes, include_classifier=True):
+    def __init__(self, num_features, model_embed_dim, backbone_heads, backbone_layers, output_classes, d_ff=2048, include_classifier=True):
         super().__init__()
-        self.b_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads)
-        self.t_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads)
-        self.m_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads)
-
+        self.b_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff)
+        self.t_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff)
+        self.m_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff)
+        self.include_classifier = include_classifier
         if include_classifier:
             self.b_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
             self.t_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
