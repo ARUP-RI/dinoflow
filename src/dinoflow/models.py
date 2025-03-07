@@ -103,7 +103,7 @@ class BTMTubes(nn.Module):
         self.b_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads)
         self.t_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads)
         self.m_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads)
-
+        self.include_classifier = include_classifier
         if include_classifier:
             self.b_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
             self.t_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
@@ -129,7 +129,9 @@ class BTMTubes(nn.Module):
             b_out = self.b_mlp(b_out)
             t_out = self.t_mlp(t_out)
             m_out = self.m_mlp(m_out)
-        x = self.combined(torch.cat((b_out, t_out, m_out), dim=1))
+            x = self.combined(torch.cat((b_out, t_out, m_out), dim=1))
+        else:
+            x = torch.cat((b_out, t_out, m_out), dim=1) 
         return x
 
 
