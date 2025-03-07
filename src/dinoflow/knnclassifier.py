@@ -19,6 +19,11 @@ from dinoflow.data import compose, shift, scale, noise, standardize_range
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
+app = typer.Typer(pretty_exceptions_show_locals=False)
+
+
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s]   %(levelname)s   %(message)s')
+
 
 def load_btm_model(b_ckpt, t_ckpt, m_ckpt, output_classes):
     b_backbone, modelconf = load_checkpoint(b_ckpt)
@@ -49,6 +54,7 @@ def fit_knn(model, trainloader):
     for i, batch in enumerate(trainloader):
         x, rowinfo = batch
         labels = rowinfo['label']
+        logger.info(f"Batch {i} of {len(trainloader)}")
         with torch.no_grad():
             features = model(x)
             train_features.append(features)
@@ -57,6 +63,7 @@ def fit_knn(model, trainloader):
     train_features = torch.cat(train_features, dim=0).flatten().float().numpy()
     train_labels = torch.cat(train_labels, dim=0).flatten().float().numpy()
 
+    logger.info(f"Training KNN classifier with {len(train_features)} samples")
     knn = KNeighborsClassifier(n_neighbors=3)
     knn.fit(train_features, train_labels)
 
@@ -71,6 +78,7 @@ def predict_knn(knn, testloader):
     for i, batch in enumerate(testloader):
         x, rowinfo = batch
         labels = rowinfo['label']
+        logger.info(f"Predicting batch {i} of {len(testloader)}")
         with torch.no_grad():
             features = model(x)
             test_features.append(features)
@@ -106,13 +114,13 @@ def main(run_name, train_labels, test_labels,
 
     torch.set_float32_matmul_precision('medium')
     
-    traindata = TubeData(train_labels, events_to_return=int(events), labelkey=labelkey, dataroot=dataroot)
+    traindata = TubeData(train_labels, events_to_return=int(events), labelkey=labelkey, data_root=dataroot)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
     logger.info(f"Positive samples: {len(traindata.positive_negative_samples()[0])}")
     logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
 
-    valdata = TubeData(test_labels, events_to_return=int(events), labelkey=labelkey, dataroot=dataroot)
+    valdata = TubeData(test_labels, events_to_return=int(events), labelkey=labelkey, data_root=dataroot)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
     logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
