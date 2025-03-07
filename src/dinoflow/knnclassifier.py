@@ -40,7 +40,8 @@ def load_btm_model(b_ckpt, t_ckpt, m_ckpt, output_classes):
                     model_embed_dim=modelconf['model_dim'],
                     backbone_heads=modelconf['heads'],
                     backbone_layers=modelconf['layers'],
-                    output_classes=output_classes)
+                    output_classes=output_classes,
+                    include_classifier=False)
 
     btm.b_backbone = b_backbone
     btm.t_backbone = t_backbone
