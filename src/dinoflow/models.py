@@ -10,7 +10,14 @@ def load_checkpoint(path, device=None):
     """
     ckpt = torch.load(path, weights_only=False, map_location=device)
     modelconf = ckpt['modelconf']    
-    teacher = TubeEncoderWithProjection(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads'], hidden_dim=modelconf['hidden_dim'], projection_dim=modelconf['projection_dim']).to(device)
+    teacher = TubeEncoderWithProjection(
+        num_features=modelconf['num_features'],
+        model_embed_dim=modelconf['model_dim'],
+        layers=modelconf['layers'],
+        d_ff=modelconf.get('d_ff', 2048),
+        heads=modelconf['heads'],
+        hidden_dim=modelconf['hidden_dim'],
+        projection_dim=modelconf['projection_dim']).to(device)
 
     teacher.load_state_dict(ckpt['teacher'])
     return teacher.tube_encoder, modelconf
@@ -122,11 +129,11 @@ class BTMTubes(nn.Module):
     """
     Combines the B, T, and M backbones and generates a final prediction
     """
-    def __init__(self, num_features, model_embed_dim, backbone_heads, backbone_layers, output_classes, d_ff=2048, include_classifier=True):
+    def __init__(self, num_features, model_embed_dim, backbone_heads, backbone_layers, output_classes, d_ff=2048, include_classifier=True, encoder_type='normal'):
         super().__init__()
-        self.b_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff)
-        self.t_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff)
-        self.m_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff)
+        self.b_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff, encoder_type)
+        self.t_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff, encoder_type)
+        self.m_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff, encoder_type)
         self.include_classifier = include_classifier
         if include_classifier:
             self.b_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
