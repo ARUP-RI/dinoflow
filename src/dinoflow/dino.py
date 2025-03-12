@@ -165,7 +165,12 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
 
             logger.debug("Computing loss")
             dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=0.2, t_temp=0.05)
-            koleo_loss = koleoloss(y_s)
+            koleo_batch_loss = torch.tensor(0.0)
+            #Important to loop over n_student_reps here, since we don't want to include the same sample twice in the loss
+            # (remember KoLeo loss looks at the two nearest neighbors, which will probably be the same sample if we include them both)
+            for nr in range(n_student_reps):
+                koleo_batch_loss += koleoloss(y_s[(nr * actual_batch_size):((nr + 1) * actual_batch_size), :])
+            koleo_loss = koleo_batch_loss / n_student_reps
             
             protot_cosim_loss = torch.tensor(0) #proto_cosim_loss(student.module.sdpa_prototype_emb_stack.L)
             
@@ -462,7 +467,7 @@ def init_comet_expr():
     )
 
 @app.command()
-def train(config, tube_type: str = None, run_name=None, checkpoint: str = None):
+def train(config, tube_type: str = None, run_name : str = None, checkpoint: str = None):
     logger.info(f"Loading config from {config}")
     conf = yaml.safe_load(open(config))
     if tube_type is not None:
