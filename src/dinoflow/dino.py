@@ -21,7 +21,7 @@ import numpy as np
 import logging
 
 
-from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, SDPAPrototypeEmbStackWithProjection
+from dinoflow.models import TubeEncoder, TubeEncoderWithProjection
 from dinoflow import data
 from dinoflow.loss import KoLeoLoss, CosineSimLoss, SelfCosineSimLoss
 from dinoflow.data import scale, shift, shuffle, compose, noise, standardize_range, subsample_events, NoLabelTubes, subsample_batch
@@ -301,8 +301,9 @@ def train_dino(conf, run_name):
             d_ff=conf['model']['d_ff'],
             hidden_dim=conf['model']['hidden_dim'],
             projection_dim=conf['model']['projection_dim']).to(DEVICE)
+        
         teacher = TubeEncoderWithProjection(
-            num_features=modelconf['num_features'],
+            num_features=conf['model']['num_features'],
             model_embed_dim=conf['model']['model_dim'],
             layers=conf['model']['layers'],
             heads=conf['model']['heads'],
@@ -327,8 +328,9 @@ def train_dino(conf, run_name):
             d_ff=conf['model']['d_ff'],
             hidden_dim=conf['model']['hidden_dim'],
             projection_dim=conf['model']['projection_dim']).to(DEVICE)
+        
         teacher = TubeEncoderWithProjection(
-            num_features=modelconf['num_features'],
+            num_features=conf['model']['num_features'],
             model_embed_dim=conf['model']['model_dim'],
             layers=conf['model']['layers'],
             heads=conf['model']['heads'],

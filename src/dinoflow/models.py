@@ -10,7 +10,14 @@ def load_checkpoint(path, device=None):
     """
     ckpt = torch.load(path, weights_only=False, map_location=device)
     modelconf = ckpt['modelconf']    
-    teacher = TubeEncoderWithProjection(num_features=modelconf['num_features'], model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads'], hidden_dim=modelconf['hidden_dim'], projection_dim=modelconf['projection_dim']).to(device)
+    teacher = TubeEncoderWithProjection(
+            num_features=modelconf['num_features'], 
+            model_embed_dim=modelconf['model_dim'], 
+            layers=modelconf['layers'],
+            d_ff=modelconf.get('d_ff', 2048),
+            heads=modelconf['heads'], 
+            hidden_dim=modelconf['hidden_dim'], 
+            projection_dim=modelconf['projection_dim']).to(device)
 
     teacher.load_state_dict(ckpt['teacher'])
     return teacher.tube_encoder, modelconf
@@ -42,7 +49,7 @@ class SwishGLUTransformerEncoderLayer(nn.TransformerEncoderLayer):
 
 class TubeEncoder(nn.Module):
     
-    def __init__(self, num_features, model_embed_dim, layers, heads, d_ff=2048):
+    def __init__(self, num_features, model_embed_dim, layers, heads, d_ff=2048, layertype='normal'):
         super().__init__()
         self.model_dim = model_embed_dim
         self.num_features = num_features
@@ -50,7 +57,14 @@ class TubeEncoder(nn.Module):
         self.heads = heads
         self.d_ff = d_ff
         self.fc = nn.Linear(num_features, model_embed_dim)
-        encoderlayer = SwishGLUTransformerEncoderLayer(d_model=model_embed_dim,
+        if layertype == 'normal':
+            encoderlayer = nn.TransformerEncoderLayer(d_model=model_embed_dim,
+                                                nhead=heads,
+                                                dim_feedforward=d_ff,
+                                                batch_first=True,
+                                                dropout=0.0)
+        elif layertype == 'swiglu':
+            encoderlayer = SwishGLUTransformerEncoderLayer(d_model=model_embed_dim,
                                                 nhead=heads,
                                                 dim_feedforward=d_ff,
                                                 batch_first=True,

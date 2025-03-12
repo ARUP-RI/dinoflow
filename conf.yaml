@@ -11,11 +11,11 @@ model:
   heads: 4
   projection_dim: 4096
   hidden_dim: 1024
-  d_ff: 1024
+  d_ff: 2048
 
 
 training:
-  batch_size: 256
+  batch_size: 128
   min_lr: 0.0000001
   max_lr: 0.00005
   warmup_iters: 5000
@@ -27,8 +27,8 @@ training:
   teacher_momentum_end: 0.999
   teacher_momentum_steps: 5000
 
-  teacher_events_start: 4096
-  teacher_events_end: 4096
+  teacher_events_start: 8192
+  teacher_events_end: 8192
   teacher_events_steps: 50000
 
   koleo_loss_weight_start: 0.005
