@@ -42,7 +42,7 @@ def load_btm_model(b_ckpt, t_ckpt, m_ckpt, output_classes):
                     model_embed_dim=modelconf['model_dim'],
                     backbone_heads=modelconf['heads'],
                     backbone_layers=modelconf['layers'],
-                    d_ff=modelconf['d_ff'],
+                    d_ff=modelconf.get('d_ff', 2048),
                     output_classes=output_classes,
                     include_classifier=False)
 

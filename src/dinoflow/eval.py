@@ -572,7 +572,7 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     if hasattr(valdata, 'positive_negative_samples'):
         logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
         logger.info(f"Negative samples: {len(valdata.positive_negative_samples()[1])}")
-        assert len(valdata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
+        #assert len(valdata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
 
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=16)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")

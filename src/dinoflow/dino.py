@@ -306,6 +306,7 @@ def train_dino(conf, run_name):
             d_ff=conf['model']['d_ff'],
             hidden_dim=conf['model']['hidden_dim'],
             projection_dim=conf['model']['projection_dim']).to(DEVICE)
+        
         teacher = TubeEncoderWithProjection(
             num_features=conf['model']['num_features'],
             model_embed_dim=conf['model']['model_dim'],
@@ -332,6 +333,7 @@ def train_dino(conf, run_name):
             d_ff=conf['model']['d_ff'],
             hidden_dim=conf['model']['hidden_dim'],
             projection_dim=conf['model']['projection_dim']).to(DEVICE)
+        
         teacher = TubeEncoderWithProjection(
             num_features=conf['model']['num_features'],
             model_embed_dim=conf['model']['model_dim'],
