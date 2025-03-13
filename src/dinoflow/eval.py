@@ -738,9 +738,13 @@ def predict(checkpoint: str,
         }
     ckpt['state_dict'] = munge_state_dict(ckpt['state_dict'])
     if 'num_classes' not in modelconf:
-        num_classes = ckpt['state_dict']['model.combined.4.bias'].shape[0]
+        logger.info(f"num_classes not found in conf, trying to get it from model state dict..")
+        bs = ckpt['state_dict']['combined.4.bias'].shape
+        logger.info(f"Model final layer shape: {bs}")
+        num_classes = ckpt['state_dict']['combined.4.bias'].shape[0]
     else:
         num_classes = modelconf['num_classes']
+    logger.info(f"Output classes: {num_classes}")
     model = BTMTubes(num_features=13,
                     model_embed_dim=modelconf['model_dim'],
                     backbone_heads=modelconf['heads'],
@@ -748,7 +752,7 @@ def predict(checkpoint: str,
                     d_ff=modelconf.get('d_ff', 2048),
                     output_classes=num_classes)
     model.load_state_dict(ckpt['state_dict'])
-    model.eval()
+    model.eval().to(DEVICE)
     
     testdata = TubeData(test_labels, data_root=dataroot, labelkey=labelkey, tubes_to_return=["b", "t", "m"], events_to_return=int(events))
     testloader = DataLoader(testdata, batch_size=batch_size, shuffle=False, num_workers=4)
@@ -756,9 +760,11 @@ def predict(checkpoint: str,
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     with torch.inference_mode():
+        print("index,accession,prediction,label")
         for b, (batch, rowdict) in enumerate(testloader):
             labels = rowdict['label']
             i = 0
+            batch = {k : batch[k].to(DEVICE) for k in ["b", "t", "m"]}
             preds = model(batch)
             if num_classes == 1:
                 preds = F.sigmoid(preds)
@@ -767,10 +773,10 @@ def predict(checkpoint: str,
             for p, l in zip(preds, labels):
                 idx = b * batch_size + i
                 if num_classes == 1:
-                    p = p.item()
+                    p = f"{p.item() :.4f}"
                 else:
                     p = p.argmax(dim=0).item()
-                print(f"{idx},{rowdict['ACCESSION'][i]},{p.item() :.4f},{labels[i]}")
+                print(f"{idx},{rowdict['ACCESSION'][i]},{p},{labels[i]}")
                 i += 1
 
 if __name__ == "__main__":

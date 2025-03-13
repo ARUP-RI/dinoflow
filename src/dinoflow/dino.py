@@ -165,7 +165,7 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
 
             logger.debug("Computing loss")
             dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=0.2, t_temp=0.05)
-            koleo_batch_loss = torch.tensor(0.0)
+            koleo_batch_loss = torch.tensor(0.0).to(DEVICE)
             #Important to loop over n_student_reps here, since we don't want to include the same sample twice in the loss
             # (remember KoLeo loss looks at the two nearest neighbors, which will probably be the same sample if we include them both)
             for nr in range(n_student_reps):
