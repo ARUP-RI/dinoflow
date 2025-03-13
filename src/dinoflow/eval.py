@@ -669,8 +669,7 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
                 epochs: int = 50,
                 mode:str = 'binary',
                 positive_repeat_factor: int = 1,
-                num_classes: int = 2,
-                train_backbone: bool = False):
+                num_classes: int = 2):
     # Helps with too many open files errors?
     torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -678,25 +677,20 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
     t_backbone, _ = load_checkpoint(t_ckpt)
     m_backbone, _ = load_checkpoint(m_ckpt)
 
-    # Turn off gradients and set to eval mode
-    if not train_backbone:
-        logger.info("Freezing backbones")
-        b_backbone.eval()
-        t_backbone.eval()
-        m_backbone.eval()
-        for p in b_backbone.parameters():
-            p.requires_grad = False
-        for p in t_backbone.parameters():
-            p.requires_grad = False
-        for p in m_backbone.parameters():
-            p.requires_grad = False
-    else:
-        logger.info("Unfreezing backbones")
-        b_backbone.train()
-        t_backbone.train()
-        m_backbone.train()
+
+    logger.info("Freezing backbones")
+    b_backbone.eval()
+    t_backbone.eval()
+    m_backbone.eval()
+    for p in b_backbone.parameters():
+        p.requires_grad = False
+    for p in t_backbone.parameters():
+        p.requires_grad = False
+    for p in m_backbone.parameters():
+        p.requires_grad = False
 
     output_classes = 1 if mode == 'binary' or mode == 'regression' else num_classes
+    
     modelconf['output_classes'] = output_classes # Add it here so it can be saved in the checkpoint
 
     btm = BTMTubes(num_features=13,
@@ -721,6 +715,171 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
     _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor)
     
     
+
+@app.command()
+def continue_training(checkpoint: str,
+                     train_labels: str,
+                     test_labels: str,
+                     run_name: str,
+                     labelkey: str = "label",
+                     dataroot: str = ".",
+                     events: int = 4096,
+                     batch_size: int = 16,
+                     epochs: int = 50,
+                     positive_repeat_factor: int = 1,
+                     tubes: str = "b,t,m",
+                     emit_predictions: bool = False):
+    """
+    Continue training from a PyTorch Lightning checkpoint.
+    
+    Args:
+        checkpoint: Path to the PyTorch Lightning checkpoint
+        train_labels: Path to the training labels CSV
+        test_labels: Path to the test labels CSV
+        run_name: Name for the run
+        labelkey: Column name in the CSV for the labels
+        dataroot: Root directory for the data
+        events: Number of events to use per sample
+        batch_size: Batch size for training
+        epochs: Number of epochs to train
+        positive_repeat_factor: Factor to repeat positive samples
+        tubes: Comma-separated list of tubes to use (e.g., "b,t,m")
+        emit_predictions: Whether to emit predictions during validation
+    """
+    # Helps with too many open files errors?
+    torch.multiprocessing.set_sharing_strategy('file_system')
+    
+    logger.info(f"Loading checkpoint from {checkpoint}")
+    ckpt = torch.load(checkpoint, map_location=DEVICE)
+    
+    # Extract model parameters from checkpoint
+    if 'hyper_parameters' in ckpt:
+        model_params = ckpt['hyper_parameters']
+        logger.info(f"Found hyperparameters in checkpoint: {model_params.keys()}")
+    else:
+        model_params = {}
+        logger.warning("No hyperparameters found in checkpoint")
+    
+    # Auto-detect model type from checkpoint
+    model_class = None
+    num_classes = None
+    
+    # Try to detect from class_path
+    if 'class_path' in ckpt:
+        if 'BinaryClassificationModel' in ckpt['class_path']:
+            logger.info("Detected BinaryClassificationModel from class_path")
+            model_class = BinaryClassificationModel
+        elif 'ClassificationModel' in ckpt['class_path']:
+            logger.info("Detected ClassificationModel from class_path")
+            model_class = ClassificationModel
+            # Try to extract num_classes
+            if 'hyper_parameters' in ckpt and 'num_classes' in ckpt['hyper_parameters']:
+                num_classes = ckpt['hyper_parameters']['num_classes']
+                logger.info(f"Found num_classes in hyperparameters: {num_classes}")
+        elif 'RegressionModel' in ckpt['class_path']:
+            logger.info("Detected RegressionModel from class_path")
+            model_class = RegressionModel
+    
+    # If class_path detection failed, try to infer from state_dict structure
+    if model_class is None and 'state_dict' in ckpt:
+        state_dict = ckpt['state_dict']
+        
+        # Look for model-specific metrics in state_dict
+        if any('f1_score' in key for key in state_dict.keys()):
+            logger.info("Detected ClassificationModel from state_dict (found f1_score)")
+            model_class = ClassificationModel
+            
+            # Try to determine num_classes from state_dict
+            for key, value in state_dict.items():
+                if 'accuracy.num_classes' in key:
+                    num_classes = value.item()
+                    logger.info(f"Found num_classes in state_dict: {num_classes}")
+                    break
+                
+        elif any('rmse' in key for key in state_dict.keys()):
+            logger.info("Detected RegressionModel from state_dict (found rmse)")
+            model_class = RegressionModel
+        else:
+            logger.info("Assuming BinaryClassificationModel (default)")
+            model_class = BinaryClassificationModel
+    
+    if model_class is None:
+        logger.warning("Could not detect model type, defaulting to BinaryClassificationModel")
+        model_class = BinaryClassificationModel
+    
+    # Load model from checkpoint
+    try:
+        if model_class == ClassificationModel and num_classes is not None:
+            logger.info(f"Loading ClassificationModel with num_classes={num_classes}")
+            model = model_class.load_from_checkpoint(checkpoint, num_classes=num_classes, emit_predictions=emit_predictions)
+        else:
+            model = model_class.load_from_checkpoint(checkpoint, emit_predictions=emit_predictions)
+        logger.info(f"Model loaded successfully")
+    except Exception as e:
+        logger.error(f"Error loading model: {e}")
+        # Try to reconstruct the model manually if automatic loading fails
+        logger.info("Attempting to reconstruct model manually...")
+        
+        if 'state_dict' in ckpt:
+            # Extract the underlying model architecture
+            # Check if this is likely a BTMTubes model based on state dict keys
+            if any('b_backbone' in key for key in ckpt['state_dict'].keys()):
+                logger.info("Detected BTMTubes model from state dict")
+                # Extract model configuration
+                if 'hyper_parameters' in ckpt:
+                    modelconf = ckpt['hyper_parameters']
+                else:
+                    # Default configuration if not found
+                    modelconf = {
+                        'model_dim': 512,
+                        'heads': 4,
+                        'layers': 10,
+                        'd_ff': 2048,
+                    }
+                
+                # Determine output classes
+                output_classes = 1
+                if model_class == ClassificationModel and num_classes is not None:
+                    output_classes = num_classes
+                
+                # Create BTMTubes model
+                btm = BTMTubes(
+                    num_features=13,
+                    model_embed_dim=modelconf.get('model_dim', 512),
+                    backbone_heads=modelconf.get('heads', 4),
+                    backbone_layers=modelconf.get('layers', 10),
+                    d_ff=modelconf.get('d_ff', 2048),
+                    output_classes=output_classes
+                )
+                
+                # Create appropriate model wrapper
+                if model_class == BinaryClassificationModel:
+                    model = BinaryClassificationModel(btm, emit_predictions=emit_predictions)
+                elif model_class == ClassificationModel:
+                    model = ClassificationModel(btm, num_classes=num_classes, emit_predictions=emit_predictions)
+                elif model_class == RegressionModel:
+                    model = RegressionModel(btm, emit_predictions=emit_predictions)
+                
+                # Load state dict
+                try:
+                    model.load_state_dict(ckpt['state_dict'])
+                    logger.info("Successfully loaded state dict")
+                except Exception as e2:
+                    logger.error(f"Error loading state dict: {e2}")
+                    raise ValueError("Could not load model from checkpoint")
+            else:
+                raise ValueError("Unknown model architecture")
+        else:
+            raise ValueError("Could not load model from checkpoint")
+    
+    # Parse tubes
+    tubes_list = tubes.split(',')
+    logger.info(f"Using tubes: {tubes_list}")
+    
+    # Run training
+    _run_trainer(model, train_labels, test_labels, tubes_list, run_name, 
+                labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor)
+
 
 @app.command()
 def predict(checkpoint: str,
