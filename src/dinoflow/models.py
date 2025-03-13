@@ -3,6 +3,53 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
+import logging
+logger = logging.getLogger(__name__)
+
+
+def munge_state_dict(state_dict):
+    """
+    Required to load the state dict from a checkpoint into a new model
+    """
+    new_state_dict = {}
+    for key, value in state_dict.items():
+        new_key = key.replace('model.', '')
+        new_state_dict[new_key] = value
+    return new_state_dict
+
+
+def load_btm_from_checkpoint(checkpoint: str, device=None):
+    """
+    Load a BTM model from the given checkpoint, doing our best to load and infer various model arch params
+    :return: BTMTubes model
+    """
+    ckpt = torch.load(checkpoint, weights_only=False)
+    if 'hyper_parameters' in ckpt:
+        modelconf = ckpt['hyper_parameters']
+    else:
+        modelconf = {
+            'd_ff': 2048,
+            'model_dim': 512,
+            'heads': 4,
+            'layers': 10,
+        }
+    ckpt['state_dict'] = munge_state_dict(ckpt['state_dict'])
+    if 'num_classes' not in modelconf:
+        logger.info(f"num_classes not found in conf, trying to get it from model state dict..")
+        bs = ckpt['state_dict']['combined.4.bias'].shape
+        logger.info(f"Model final layer shape: {bs}")
+        num_classes = ckpt['state_dict']['combined.4.bias'].shape[0]
+    else:
+        num_classes = modelconf['num_classes']
+    logger.info(f"Output classes: {num_classes}")
+    model = BTMTubes(num_features=13,
+                    model_embed_dim=modelconf['model_dim'],
+                    backbone_heads=modelconf['heads'],
+                    backbone_layers=modelconf['layers'],
+                    d_ff=modelconf.get('d_ff', 2048),
+                    output_classes=num_classes)
+    model.load_state_dict(ckpt['state_dict'])
+
 
 def load_checkpoint(path, device=None):
     """
