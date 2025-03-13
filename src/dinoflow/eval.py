@@ -775,14 +775,14 @@ def continue_training(checkpoint: str,
     
     if 'model_class' in model_params:
         mc = model_params.get('model_class')
-        if mc is None:
-            mc = ClassificationModel
-        elif mc in ['BinaryClassificationModel', 'ClassificationModel', 'RegressionModel']:
+        if mc in ['BinaryClassificationModel', 'ClassificationModel', 'RegressionModel']:
             logger.info(f"Loading model class: {mc}")
             model_class = eval(mc)
         else:
-            logger.warning("Could not detect model type, defaulting to BinaryClassificationModel")
-            model_class = ClassificationModel
+            raise ValueError(f"Unknown model class {mc}")
+    else:
+        logger.warning("Could not detect model type, defaulting to BinaryClassificationModel")
+        model_class = ClassificationModel
     
     # Load model from checkpoint
     try:
