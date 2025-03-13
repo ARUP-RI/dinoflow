@@ -721,6 +721,7 @@ def continue_training(checkpoint: str,
                      train_labels: str,
                      test_labels: str,
                      run_name: str,
+                     model_class: str = None,
                      labelkey: str = "label",
                      dataroot: str = ".",
                      events: int = 4096,
@@ -746,9 +747,13 @@ def continue_training(checkpoint: str,
     """
     # Helps with too many open files errors?
     torch.multiprocessing.set_sharing_strategy('file_system')
-    
-    model = load_btm_from_checkpoint(checkpoint, device=DEVICE)
+
+    model, modelconf = load_btm_from_checkpoint(checkpoint, device=DEVICE)
     model.train()
+
+    assert model_class in ["BinaryClassificationModel", "ClassificationModel", "RegressionModel"], f"Unknown model class: {model_class}"
+    mclass = eval(model_class)
+    model = mclass(model, emit_predictions=False, ckpt_params=modelconf)
     
     # Run training
     _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, 
@@ -766,7 +771,7 @@ def predict(checkpoint: str,
     Predict the labels for the test set
     """
     # In the future we'll be able to load the modelconf from the checkpoint but older models dont save it
-    model = load_btm_from_checkpoint(checkpoint, device=DEVICE)
+    model, modelconf = load_btm_from_checkpoint(checkpoint, device=DEVICE)
     model.eval().to(DEVICE)
     
     testdata = TubeData(test_labels, data_root=dataroot, labelkey=labelkey, tubes_to_return=["b", "t", "m"], events_to_return=int(events))
