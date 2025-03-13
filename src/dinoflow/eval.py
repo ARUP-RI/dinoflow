@@ -754,14 +754,14 @@ def continue_training(checkpoint: str,
     if freeze_backbone_layers > 0:
         logger.info(f"Freezing backbone layers: {freeze_backbone_layers}")
         for i in range(freeze_backbone_layers):
-            model.b_backbone.layers[i].eval()
-            for p in model.b_backbone.layers[i].parameters():
+            model.b_backbone.encoder.layers[i].eval()
+            for p in model.b_backbone.encoder.layers[i].parameters():
                 p.requires_grad = False
-            model.t_backbone.layers[i].eval()
-            for p in model.t_backbone.layers[i].parameters():
+            model.t_backbone.encoder.layers[i].eval()
+            for p in model.t_backbone.encoder.layers[i].parameters():
                 p.requires_grad = False
-            model.m_backbone.layers[i].eval()
-            for p in model.m_backbone.layers[i].parameters():
+            model.m_backbone.encoder.layers[i].eval()
+            for p in model.m_backbone.encoder.layers[i].parameters():
                 p.requires_grad = False
 
     assert model_class in ["BinaryClassificationModel", "ClassificationModel", "RegressionModel"], f"Unknown model class: {model_class}"
