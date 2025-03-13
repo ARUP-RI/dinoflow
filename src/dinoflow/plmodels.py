@@ -1,8 +1,9 @@
 import torch
-import torch.nn as nn
-import torch.optim as optim
 import pytorch_lightning as pl
-from torchmetrics import BinaryAccuracy, MeanMetric, MeanSquaredError, MeanAbsoluteError, R2Score, ConfusionMatrix
+from torchmetrics import MeanMetric, MeanSquaredError, MeanAbsoluteError, R2Score, ConfusionMatrix
+from torchmetrics.classification import BinaryAccuracy
+from torchmetrics.aggregation import MeanMetric, SumMetric
+
 from sklearn.metrics import roc_curve, precision_recall_curve, auc, average_precision_score
 import numpy as np
 import matplotlib.pyplot as plt
