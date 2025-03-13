@@ -766,7 +766,7 @@ def continue_training(checkpoint: str,
 
     assert model_class in ["BinaryClassificationModel", "ClassificationModel", "RegressionModel"], f"Unknown model class: {model_class}"
     mclass = eval(model_class)
-    model = mclass(model, emit_predictions=False, ckpt_params=modelconf)
+    model = mclass(model, emit_predictions=False, ckpt_params=modelconf, num_classes=modelconf['num_classes'])
     
     # Run training
     _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, 
