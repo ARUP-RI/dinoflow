@@ -49,6 +49,7 @@ def load_btm_from_checkpoint(checkpoint: str, device=None):
                     d_ff=modelconf.get('d_ff', 2048),
                     output_classes=num_classes)
     model.load_state_dict(ckpt['state_dict'])
+    return model
 
 
 def load_checkpoint(path, device=None):
