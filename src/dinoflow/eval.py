@@ -725,6 +725,7 @@ def continue_training(checkpoint: str,
                      labelkey: str = "label",
                      dataroot: str = ".",
                      events: int = 4096,
+                     freeze_backbone_layers: int = 0,
                      batch_size: int = 16,
                      epochs: int = 50,
                      positive_repeat_factor: int = 1):
@@ -750,6 +751,18 @@ def continue_training(checkpoint: str,
 
     model, modelconf = load_btm_from_checkpoint(checkpoint, device=DEVICE)
     model.train()
+    if freeze_backbone_layers > 0:
+        logger.info(f"Freezing backbone layers: {freeze_backbone_layers}")
+        for i in range(freeze_backbone_layers):
+            model.b_backbone.layers[i].eval()
+            for p in model.b_backbone.layers[i].parameters():
+                p.requires_grad = False
+            model.t_backbone.layers[i].eval()
+            for p in model.t_backbone.layers[i].parameters():
+                p.requires_grad = False
+            model.m_backbone.layers[i].eval()
+            for p in model.m_backbone.layers[i].parameters():
+                p.requires_grad = False
 
     assert model_class in ["BinaryClassificationModel", "ClassificationModel", "RegressionModel"], f"Unknown model class: {model_class}"
     mclass = eval(model_class)
