@@ -70,6 +70,9 @@ class BinaryClassificationModel(pl.LightningModule):
         self.training_loss_mean = MeanMetric()
         self.validation_loss_mean = MeanMetric()
         self.emit_predictions = emit_predictions
+        if ckpt_params is None:
+            ckpt_params = {}
+        ckpt_params['model_class'] = self.__class__.__name__
         if ckpt_params is not None:
             self.save_hyperparameters(ckpt_params)
         
@@ -239,6 +242,9 @@ class ClassificationModel(pl.LightningModule):
         self.training_loss_mean = MeanMetric()
         self.validation_loss_mean = MeanMetric()
         self.emit_predictions = emit_predictions
+        if ckpt_params is None:
+            ckpt_params = {}
+        ckpt_params['model_class'] = self.__class__.__name__
         if ckpt_params is not None:
             self.save_hyperparameters(ckpt_params)
         
@@ -376,6 +382,9 @@ class RegressionModel(pl.LightningModule):
         self.warmup_iters = warmup_iters
         self.lr_decay_iters = lr_decay_iters
         self.emit_predictions = emit_predictions
+        if ckpt_params is None:
+            ckpt_params = {}
+        ckpt_params['model_class'] = self.__class__.__name__
         if ckpt_params is not None:
             self.save_hyperparameters(ckpt_params)
         # Regression metrics
@@ -764,48 +773,16 @@ def continue_training(checkpoint: str,
     model_class = None
     num_classes = None
     
-    # Try to detect from class_path
-    if 'class_path' in ckpt:
-        if 'BinaryClassificationModel' in ckpt['class_path']:
-            logger.info("Detected BinaryClassificationModel from class_path")
-            model_class = BinaryClassificationModel
-        elif 'ClassificationModel' in ckpt['class_path']:
-            logger.info("Detected ClassificationModel from class_path")
-            model_class = ClassificationModel
-            # Try to extract num_classes
-            if 'hyper_parameters' in ckpt and 'num_classes' in ckpt['hyper_parameters']:
-                num_classes = ckpt['hyper_parameters']['num_classes']
-                logger.info(f"Found num_classes in hyperparameters: {num_classes}")
-        elif 'RegressionModel' in ckpt['class_path']:
-            logger.info("Detected RegressionModel from class_path")
-            model_class = RegressionModel
-    
-    # If class_path detection failed, try to infer from state_dict structure
-    if model_class is None and 'state_dict' in ckpt:
-        state_dict = ckpt['state_dict']
-        
-        # Look for model-specific metrics in state_dict
-        if any('f1_score' in key for key in state_dict.keys()):
-            logger.info("Detected ClassificationModel from state_dict (found f1_score)")
-            model_class = ClassificationModel
-            
-            # Try to determine num_classes from state_dict
-            for key, value in state_dict.items():
-                if 'accuracy.num_classes' in key:
-                    num_classes = value.item()
-                    logger.info(f"Found num_classes in state_dict: {num_classes}")
-                    break
-                
-        elif any('rmse' in key for key in state_dict.keys()):
-            logger.info("Detected RegressionModel from state_dict (found rmse)")
-            model_class = RegressionModel
+    if 'model_class' in model_params:
+        mc = model_params.get('model_class')
+        if mc is None:
+            mc = ClassificationModel
+        elif mc in ['BinaryClassificationModel', 'ClassificationModel', 'RegressionModel']:
+            logger.info(f"Loading model class: {mc}")
+            model_class = eval(mc)
         else:
-            logger.info("Assuming BinaryClassificationModel (default)")
-            model_class = BinaryClassificationModel
-    
-    if model_class is None:
-        logger.warning("Could not detect model type, defaulting to BinaryClassificationModel")
-        model_class = ClassificationModel
+            logger.warning("Could not detect model type, defaulting to BinaryClassificationModel")
+            model_class = ClassificationModel
     
     # Load model from checkpoint
     try:
