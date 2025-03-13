@@ -669,7 +669,8 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
                 epochs: int = 50,
                 mode:str = 'binary',
                 positive_repeat_factor: int = 1,
-                num_classes: int = 2):
+                num_classes: int = 2,
+                train_backbone: bool = False):
     # Helps with too many open files errors?
     torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -678,15 +679,22 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
     m_backbone, _ = load_checkpoint(m_ckpt)
 
     # Turn off gradients and set to eval mode
-    b_backbone.eval()
-    t_backbone.eval()
-    m_backbone.eval()
-    for p in b_backbone.parameters():
-        p.requires_grad = False
-    for p in t_backbone.parameters():
-        p.requires_grad = False
-    for p in m_backbone.parameters():
-        p.requires_grad = False
+    if not train_backbone:
+        logger.info("Freezing backbones")
+        b_backbone.eval()
+        t_backbone.eval()
+        m_backbone.eval()
+        for p in b_backbone.parameters():
+            p.requires_grad = False
+        for p in t_backbone.parameters():
+            p.requires_grad = False
+        for p in m_backbone.parameters():
+            p.requires_grad = False
+    else:
+        logger.info("Unfreezing backbones")
+        b_backbone.train()
+        t_backbone.train()
+        m_backbone.train()
 
     output_classes = 1 if mode == 'binary' or mode == 'regression' else num_classes
     modelconf['output_classes'] = output_classes # Add it here so it can be saved in the checkpoint
