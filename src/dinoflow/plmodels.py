@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import pytorch_lightning as pl
-from torchmetrics import BinaryAccuracy, MeanMetric, MeanSquaredError, MeanAbsoluteError, R2Score
+from torchmetrics import BinaryAccuracy, MeanMetric, MeanSquaredError, MeanAbsoluteError, R2Score, ConfusionMatrix
 from sklearn.metrics import roc_curve, precision_recall_curve, auc, average_precision_score
 import numpy as np
 import matplotlib.pyplot as plt
@@ -190,7 +190,8 @@ class ClassificationModel(pl.LightningModule):
         from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score
         self.accuracy = MulticlassAccuracy(num_classes=num_classes)
         self.f1_score = MulticlassF1Score(num_classes=num_classes)
-        
+        self.confusion_matrix = ConfusionMatrix(num_classes=num_classes)
+
         self.training_loss_mean = MeanMetric()
         self.validation_loss_mean = MeanMetric()
         self.emit_predictions = emit_predictions
@@ -265,35 +266,9 @@ class ClassificationModel(pl.LightningModule):
             gathered_preds = torch.cat(self.val_preds)
             gathered_labels = torch.cat(self.val_labels)
         
-        # Only create and log the confusion matrix on the main process
-        if self.trainer.is_global_zero and isinstance(self.logger, CometLogger):
-            from sklearn.metrics import confusion_matrix
-            import seaborn as sns
-            
-            # Create confusion matrix
-            cm = confusion_matrix(
-                gathered_labels.cpu().numpy(), 
-                gathered_preds.cpu().numpy(),
-                labels=range(self.num_classes)
-            )
-            
-            # Plot confusion matrix
-            fig, ax = plt.subplots(figsize=(10, 8))
-            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
-            ax.set_xlabel('Predicted labels')
-            ax.set_ylabel('True labels')
-            ax.set_title('Confusion Matrix')
-            
-            # If we have more than 10 classes, don't show all tick labels
-            if self.num_classes <= 10:
-                ax.set_xticks(np.arange(self.num_classes) + 0.5)
-                ax.set_yticks(np.arange(self.num_classes) + 0.5)
-                ax.set_xticklabels(range(self.num_classes))
-                ax.set_yticklabels(range(self.num_classes))
-            
-            # Log the confusion matrix to CometML
-            self.logger.experiment.log_figure(figure=fig, figure_name="Confusion_Matrix", step=self.current_epoch)
-            plt.close(fig)
+        self.confusion_matrix(gathered_preds, gathered_labels)
+        cm = self.confusion_matrix.compute()
+        self.logger.experiment.log_confusion_matrix(cm, step=self.current_epoch)
 
         # Log metrics
         self.log('accuracy', accuracy, sync_dist=True)
@@ -305,6 +280,7 @@ class ClassificationModel(pl.LightningModule):
         # Reset metrics
         self.accuracy.reset()
         self.f1_score.reset()
+        self.confusion_matrix.reset()
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
