@@ -750,7 +750,7 @@ def continue_training(checkpoint: str,
     torch.multiprocessing.set_sharing_strategy('file_system')
     
     logger.info(f"Loading checkpoint from {checkpoint}")
-    ckpt = torch.load(checkpoint, map_location=DEVICE)
+    ckpt = torch.load(checkpoint, map_location=DEVICE, weights_only=False)
     
     # Extract model parameters from checkpoint
     if 'hyper_parameters' in ckpt:
@@ -805,7 +805,7 @@ def continue_training(checkpoint: str,
     
     if model_class is None:
         logger.warning("Could not detect model type, defaulting to BinaryClassificationModel")
-        model_class = BinaryClassificationModel
+        model_class = ClassificationModel
     
     # Load model from checkpoint
     try:
