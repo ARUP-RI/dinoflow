@@ -41,7 +41,8 @@ def load_btm_from_checkpoint(checkpoint: str, device=None):
         num_classes = ckpt['state_dict']['combined.4.bias'].shape[0]
     else:
         num_classes = modelconf['num_classes']
-    logger.info(f"Output classes: {num_classes}")
+    modelconf['output_classes'] = num_classes
+    logger.info(f"Model output classes: {num_classes}")
     model = BTMTubes(num_features=13,
                     model_embed_dim=modelconf['model_dim'],
                     backbone_heads=modelconf['heads'],
@@ -49,6 +50,8 @@ def load_btm_from_checkpoint(checkpoint: str, device=None):
                     d_ff=modelconf.get('d_ff', 2048),
                     output_classes=num_classes)
     model.load_state_dict(ckpt['state_dict'])
+    model.to(device)
+    return model, modelconf
 
 
 def load_checkpoint(path, device=None):
