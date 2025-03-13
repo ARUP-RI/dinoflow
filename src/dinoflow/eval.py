@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader, Dataset
 import numpy as np
 
 
-from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint, BTMTubes
+from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint, BTMTubes, load_btm_from_checkpoint
 from dinoflow.data import TubeData, collate_fn, compose, shift, scale, noise, standardize_range
 from dinoflow import util
 
@@ -605,15 +605,6 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     trainer.fit(model, trainloader, valloader)
 
 
-def munge_state_dict(state_dict):
-    """
-    Required to load the state dict from a checkpoint into a new model
-    """
-    new_state_dict = {}
-    for key, value in state_dict.items():
-        new_key = key.replace('model.', '')
-        new_state_dict[new_key] = value
-    return new_state_dict
 
 @app.command()
 def train(run_name, train_labels, test_labels, backbone: str, conf: str, tube_type: str = "", dataroot: str = "/", positive_repeat_factor: int = 1, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, mode: str = 'binary', num_classes: int = 2) :
@@ -735,9 +726,7 @@ def continue_training(checkpoint: str,
                      events: int = 4096,
                      batch_size: int = 16,
                      epochs: int = 50,
-                     positive_repeat_factor: int = 1,
-                     tubes: str = "b,t,m",
-                     emit_predictions: bool = False):
+                     positive_repeat_factor: int = 1):
     """
     Continue training from a PyTorch Lightning checkpoint.
     
@@ -758,103 +747,11 @@ def continue_training(checkpoint: str,
     # Helps with too many open files errors?
     torch.multiprocessing.set_sharing_strategy('file_system')
     
-    logger.info(f"Loading checkpoint from {checkpoint}")
-    ckpt = torch.load(checkpoint, map_location=DEVICE, weights_only=False)
-    
-    # Extract model parameters from checkpoint
-    if 'hyper_parameters' in ckpt:
-        model_params = ckpt['hyper_parameters']
-        logger.info(f"Found hyperparameters in checkpoint: {model_params.keys()}")
-    else:
-        model_params = {}
-        logger.warning("No hyperparameters found in checkpoint")
-    
-    # Auto-detect model type from checkpoint
-    model_class = None
-    num_classes = None
-    
-    if 'model_class' in model_params:
-        mc = model_params.get('model_class')
-        if mc in ['BinaryClassificationModel', 'ClassificationModel', 'RegressionModel']:
-            logger.info(f"Loading model class: {mc}")
-            model_class = eval(mc)
-        else:
-            raise ValueError(f"Unknown model class {mc}")
-    else:
-        logger.warning("Could not detect model type, defaulting to BinaryClassificationModel")
-        model_class = ClassificationModel
-    
-    # Load model from checkpoint
-    try:
-        if model_class == ClassificationModel and num_classes is not None:
-            logger.info(f"Loading ClassificationModel with num_classes={num_classes}")
-            model = model_class.load_from_checkpoint(checkpoint, num_classes=num_classes, emit_predictions=emit_predictions)
-        else:
-            model = model_class.load_from_checkpoint(checkpoint, emit_predictions=emit_predictions)
-        logger.info(f"Model loaded successfully")
-    except Exception as e:
-        logger.error(f"Error loading model: {e}")
-        # Try to reconstruct the model manually if automatic loading fails
-        logger.info("Attempting to reconstruct model manually...")
-        
-        if 'state_dict' in ckpt:
-            # Extract the underlying model architecture
-            # Check if this is likely a BTMTubes model based on state dict keys
-            if any('b_backbone' in key for key in ckpt['state_dict'].keys()):
-                logger.info("Detected BTMTubes model from state dict")
-                # Extract model configuration
-                if 'hyper_parameters' in ckpt:
-                    modelconf = ckpt['hyper_parameters']
-                else:
-                    # Default configuration if not found
-                    modelconf = {
-                        'model_dim': 512,
-                        'heads': 4,
-                        'layers': 10,
-                        'd_ff': 2048,
-                    }
-                
-                # Determine output classes
-                output_classes = 1
-                if model_class == ClassificationModel and num_classes is not None:
-                    output_classes = num_classes
-                
-                # Create BTMTubes model
-                btm = BTMTubes(
-                    num_features=13,
-                    model_embed_dim=modelconf.get('model_dim', 512),
-                    backbone_heads=modelconf.get('heads', 4),
-                    backbone_layers=modelconf.get('layers', 10),
-                    d_ff=modelconf.get('d_ff', 2048),
-                    output_classes=output_classes
-                )
-                
-                # Create appropriate model wrapper
-                if model_class == BinaryClassificationModel:
-                    model = BinaryClassificationModel(btm, emit_predictions=emit_predictions)
-                elif model_class == ClassificationModel:
-                    model = ClassificationModel(btm, num_classes=num_classes, emit_predictions=emit_predictions)
-                elif model_class == RegressionModel:
-                    model = RegressionModel(btm, emit_predictions=emit_predictions)
-                
-                # Load state dict
-                try:
-                    model.load_state_dict(ckpt['state_dict'])
-                    logger.info("Successfully loaded state dict")
-                except Exception as e2:
-                    logger.error(f"Error loading state dict: {e2}")
-                    raise ValueError("Could not load model from checkpoint")
-            else:
-                raise ValueError("Unknown model architecture")
-        else:
-            raise ValueError("Could not load model from checkpoint")
-    
-    # Parse tubes
-    tubes_list = tubes.split(',')
-    logger.info(f"Using tubes: {tubes_list}")
+    model = load_btm_from_checkpoint(checkpoint, device=DEVICE)
+    model.train()
     
     # Run training
-    _run_trainer(model, train_labels, test_labels, tubes_list, run_name, 
+    _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, 
                 labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor)
 
 
@@ -869,33 +766,7 @@ def predict(checkpoint: str,
     Predict the labels for the test set
     """
     # In the future we'll be able to load the modelconf from the checkpoint but older models dont save it
-    
-    ckpt = torch.load(checkpoint, weights_only=False)
-    if 'hyper_parameters' in ckpt:
-        modelconf = ckpt['hyper_parameters']
-    else:
-        modelconf = {
-            'd_ff': 2048,
-            'model_dim': 512,
-            'heads': 4,
-            'layers': 10,
-        }
-    ckpt['state_dict'] = munge_state_dict(ckpt['state_dict'])
-    if 'num_classes' not in modelconf:
-        logger.info(f"num_classes not found in conf, trying to get it from model state dict..")
-        bs = ckpt['state_dict']['combined.4.bias'].shape
-        logger.info(f"Model final layer shape: {bs}")
-        num_classes = ckpt['state_dict']['combined.4.bias'].shape[0]
-    else:
-        num_classes = modelconf['num_classes']
-    logger.info(f"Output classes: {num_classes}")
-    model = BTMTubes(num_features=13,
-                    model_embed_dim=modelconf['model_dim'],
-                    backbone_heads=modelconf['heads'],
-                    backbone_layers=modelconf['layers'],
-                    d_ff=modelconf.get('d_ff', 2048),
-                    output_classes=num_classes)
-    model.load_state_dict(ckpt['state_dict'])
+    model = load_btm_from_checkpoint(checkpoint, device=DEVICE)
     model.eval().to(DEVICE)
     
     testdata = TubeData(test_labels, data_root=dataroot, labelkey=labelkey, tubes_to_return=["b", "t", "m"], events_to_return=int(events))
