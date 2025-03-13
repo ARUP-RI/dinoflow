@@ -211,7 +211,7 @@ class ClassificationModel(pl.LightningModule):
         x, rowinfo = batch
         labels = rowinfo['label']
         preds = self(x)
-        loss = torch.nn.functional.cross_entropy(preds, labels.long())
+        loss = torch.nn.functional.cross_entropy(preds, labels.long(), label_smoothing=0.1)
         self.training_loss_mean.update(loss)
         return loss
     
@@ -225,7 +225,7 @@ class ClassificationModel(pl.LightningModule):
         labels = rowinfo['label']
         accs = rowinfo['ACCESSION']
         preds = self(x)
-        loss = torch.nn.functional.cross_entropy(preds, labels.long())
+        loss = torch.nn.functional.cross_entropy(preds, labels.long(), label_smoothing=0.1)
         
         # Get class predictions
         pred_classes = torch.argmax(preds, dim=1)
