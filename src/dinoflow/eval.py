@@ -9,8 +9,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from torchmetrics.classification import BinaryPrecisionRecallCurve, BinaryF1Score, BinaryRecall, BinaryPrecision, BinaryAccuracy
-from torchmetrics.aggregation import MeanMetric, SumMetric
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import CometLogger
 import matplotlib.pyplot as plt
@@ -56,7 +54,6 @@ class CombinedModel(nn.Module):
     
     def forward(self, x):
         return self.classifier(self.backbone(x.float()))
-
 
 
 def load_featmeans_stds(conf, tube_type):

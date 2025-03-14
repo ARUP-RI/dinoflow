@@ -149,6 +149,13 @@ class BinaryClassificationModel(pl.LightningModule):
         self.log('fscore', best_f1)
         self.log('threshold', threshold)
         self.log('precision', best_precision)
+        
+        # Log the Area Under Precision-Recall Curve (AUPRC)
+        # This is the same as average precision score
+        if self.trainer.is_global_zero and isinstance(self.logger, CometLogger):
+            self.log('auprc', avg_precision)
+        else:
+            self.log('auprc', float("NaN"))
 
         # Process syncing is handled by lightning for these, and we want sync_dist=True to make sure things are synced across processes 
         self.log('accuracy', accuracy, sync_dist=True)
