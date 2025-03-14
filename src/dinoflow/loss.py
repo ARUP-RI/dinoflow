@@ -13,6 +13,44 @@ import torch.nn.functional as F
 logger = logging.getLogger(__name__)
 
 
+class WeightedCategoricalCrossentropy(nn.Module):
+    """
+    Weighted version of cross entropy
+
+    
+    cost_matrix: torch tensor with shape (num_classes, num_classes)
+                    where element c[i,j] is the cost of predicting class
+                    j when the true class is i.  Must be positive.
+    """
+    def __init__(self, cost_matrix):
+        super().__init__()
+        self.cost_matrix = cost_matrix
+
+    def forward(self, y_pred, y_true):
+        """
+        y_pred: (N, C) where N is the batch size and C is the number of classes
+        y_true: (N,) where each value is an index in [0, C-1]
+        """
+        num_classes = self.cost_matrix.size(0)
+        N = y_pred.size(0)
+
+        # Ensure y_true is Long tensors
+        y_true = y_true.long()
+
+        # Convert cost matrix to be indexed by y_true
+        cost_vector = self.cost_matrix[y_true, :].to(y_pred.device) # (N, num_classes)
+
+        # Standard Cross Entropy
+        log_softmax = F.log_softmax(y_pred, dim=-1)
+        cross_entropy = -torch.gather(log_softmax, dim=1, index=y_true.unsqueeze(1))
+        cross_entropy = cross_entropy.squeeze(1)  # (N,)
+
+        # Apply Weights
+        weighted_cross_entropy = cross_entropy * torch.gather(cost_vector, dim=1, index=y_true.unsqueeze(1)).squeeze(1)
+
+        return torch.mean(weighted_cross_entropy)
+
+
 class KoLeoLoss(nn.Module):
     """Kozachenko-Leonenko entropic loss regularizer from Sablayrolles et al. - 2018 - Spreading vectors for similarity search"""
 
