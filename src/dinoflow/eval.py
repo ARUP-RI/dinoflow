@@ -127,11 +127,17 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
             experiment_name=run_name,  # Optional
         )
 
+    logger.info(f"Checkpoint monitor: {checkpoint_monitor_val}, mode: {checkpoint_monitor_mode}")
     trainer = pl.Trainer(max_epochs=epochs,
                         accelerator='auto',
                         precision="bf16-mixed",
                         callbacks=[
-                            ModelCheckpoint(dirpath=f"dinoflow_eval_{run_name}", monitor=checkpoint_monitor_val, mode=checkpoint_monitor_mode, save_top_k=1, save_last=True, filename=run_name + "_e{epoch}"),
+                            ModelCheckpoint(dirpath=f"dinoflow_eval_{run_name}",
+                                            monitor=checkpoint_monitor_val, 
+                                            mode=checkpoint_monitor_mode, 
+                                            save_top_k=3, 
+                                            save_last=True, 
+                                            filename=run_name + "_{" + checkpoint_monitor_val + " :.3f}_" + "_{epoch}"),
                             LearningRateMonitor(logging_interval='step'),
                         ],
                         logger=comet_logger)
