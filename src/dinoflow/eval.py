@@ -332,6 +332,7 @@ def predict(checkpoint: str,
     logger.info(f"Loaded {len(testloader.dataset)} samples for test")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    num_classes = modelconf['num_classes']
     with torch.inference_mode():
         print("index,accession,prediction,label")
         for b, (batch, rowdict) in enumerate(testloader):

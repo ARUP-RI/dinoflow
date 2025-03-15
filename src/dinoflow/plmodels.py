@@ -8,7 +8,7 @@ from sklearn.metrics import roc_curve, precision_recall_curve, auc, average_prec
 import numpy as np
 import matplotlib.pyplot as plt
 from pytorch_lightning.loggers import CometLogger
-from dinoflow.util import WarmupCosineLRScheduler
+from dinoflow import util
 
 
 class BinaryClassificationModel(pl.LightningModule):
@@ -198,7 +198,7 @@ class ClassificationModel(pl.LightningModule):
         from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score
         self.accuracy = MulticlassAccuracy(num_classes=num_classes)
         self.f1_score = MulticlassF1Score(num_classes=num_classes)
-        self.confusion_matrix = ConfusionMatrix(num_classes=num_classes)
+        self.confusion_matrix = ConfusionMatrix(task='multiclass', num_classes=num_classes)
 
         self.training_loss_mean = MeanMetric()
         self.validation_loss_mean = MeanMetric()
@@ -220,7 +220,7 @@ class ClassificationModel(pl.LightningModule):
         x, rowinfo = batch
         labels = rowinfo['label']
         preds = self(x)
-        loss = torch.nn.functional.cross_entropy(preds, labels.long())
+        loss = torch.nn.functional.cross_entropy(preds, labels.long(), label_smoothing=0.1)
         self.training_loss_mean.update(loss)
         return loss
     
@@ -234,7 +234,7 @@ class ClassificationModel(pl.LightningModule):
         labels = rowinfo['label']
         accs = rowinfo['ACCESSION']
         preds = self(x)
-        loss = torch.nn.functional.cross_entropy(preds, labels.long())
+        loss = torch.nn.functional.cross_entropy(preds, labels.long(), label_smoothing=0.1)
         
         # Get class predictions
         pred_classes = torch.argmax(preds, dim=1)
@@ -248,6 +248,7 @@ class ClassificationModel(pl.LightningModule):
                 print(f"{a}\t{p.item()}\t{l.item()}")
         
         # Update metrics
+        self.confusion_matrix(preds, labels.long())
         self.accuracy(preds, labels.long())
         self.f1_score(preds, labels.long())
         self.validation_loss_mean.update(loss)
@@ -274,9 +275,8 @@ class ClassificationModel(pl.LightningModule):
             gathered_preds = torch.cat(self.val_preds)
             gathered_labels = torch.cat(self.val_labels)
         
-        self.confusion_matrix(gathered_preds, gathered_labels)
         cm = self.confusion_matrix.compute()
-        self.logger.experiment.log_confusion_matrix(cm, step=self.current_epoch)
+        self.logger.experiment.log_confusion_matrix(matrix=cm.cpu().numpy(), step=self.current_epoch)
 
         # Log metrics
         self.log('accuracy', accuracy, sync_dist=True)
