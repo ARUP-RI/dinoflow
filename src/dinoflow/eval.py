@@ -147,7 +147,9 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
 
 
 @app.command()
-def train(run_name, train_labels, test_labels, backbone: str, conf: str, tube_type: str = "", dataroot: str = "/", positive_repeat_factor: int = 1, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, mode: str = 'binary', num_classes: int = 2) :
+def train(run_name, train_labels, test_labels, 
+          backbone: str, 
+          conf: str, tube_type: str = "", dataroot: str = "/", positive_repeat_factor: int = 1, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, mode: str = 'binary', num_classes: int = 2) :
     """
     Evaluate the model on the test set
     """
@@ -207,6 +209,7 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
                 events: int = 4096,
                 batch_size: int = 16,
                 epochs: int = 50,
+                max_lr: float = 0.0001,
                 mode:str = 'binary',
                 positive_repeat_factor: int = 1,
                 num_classes: int = 2):
@@ -244,11 +247,11 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
     btm.m_backbone = m_backbone
     
     if mode == 'binary':
-        model = BinaryClassificationModel(btm, emit_predictions=False, ckpt_params=modelconf)
+        model = BinaryClassificationModel(btm, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr)
     elif mode == 'multiclass':
-        model = ClassificationModel(btm, num_classes=num_classes, emit_predictions=False, ckpt_params=modelconf)
+        model = ClassificationModel(btm, num_classes=num_classes, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr)
     elif mode == 'regression':
-        model = RegressionModel(btm, emit_predictions=False, ckpt_params=modelconf)
+        model = RegressionModel(btm, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr)
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
