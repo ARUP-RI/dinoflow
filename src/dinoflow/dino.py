@@ -401,9 +401,9 @@ def train_dino(conf, run_name):
     #])
 
     student_augs = compose([
-        partial(scale, prob=0.5, scale=0.1),
-        partial(shift, prob=0.45, scale=0.1),
-        partial(noise, prob=0.75, scale=0.2),
+        partial(scale, prob=0.5, scale=0.5),
+        partial(shift, prob=0.45, scale=0.5),
+        partial(noise, prob=0.75, scale=2.5),
     ])
 
     #logger.info(f"Proc: {os.getpid()} device: {device_id} w: {student.module.backbone.embedding[0].weight[0, :]}")

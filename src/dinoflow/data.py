@@ -98,20 +98,21 @@ def scale(x, device='cpu', prob=0.5, scale=0.1):
     If x has 2 dimensions, we scale the whole tensor
     Modifies in place! Use clone if you need the original tensor unmodified
     """
+    clamp_scale = 3.0
     if len(x.shape) == 3:
         r = torch.rand(x.shape[0])
         for i in range(x.shape[0]):
             if r[i] < prob:
                 z = torch.normal(mean=torch.tensor([1.0 for _ in range(x.shape[-1])]),
                         std=torch.tensor([scale for _ in range(x.shape[-1])])).to(device)
-                z = torch.clamp(z, min=1.0 - 2*scale, max=1.0 + 2*scale)
+                z = torch.clamp(z, min=1.0 - clamp_scale * scale, max=1.0 + clamp_scale * scale)
                 x[i, :, :] = x[i, :, :] * z
     elif len(x.shape) == 2:
         r = torch.rand(1)
         if r < prob:
             z = torch.normal(mean=torch.tensor([1.0 for _ in range(x.shape[-1])]),
                         std=torch.tensor([scale for _ in range(x.shape[-1])])).to(device)
-            z = torch.clamp(z, min=1.0 - 2*scale, max=1.0 + 2*scale)
+            z = torch.clamp(z, min=1.0 - clamp_scale * scale, max=1.0 + clamp_scale * scale)
             x = x * z
     else:
         raise ValueError(f"Input tensor must have 2 or 3 dimensions (found {len(x.shape)})")
@@ -125,18 +126,19 @@ def shift(x, device='cpu', prob=0.5, scale=0.1):
     If x has 2 dimensions, we shift the whole tensor
     Modifies in place! Use clone if you need the original tensor unmodified
     """
+    clamp_scale = 3.0
     if len(x.shape) == 3:   
         r = torch.rand(x.shape[0])
         for i in range(x.shape[0]):
             if r[i] < prob:
                 z = torch.normal(mean=torch.tensor([0.0 for _ in range(x.shape[-1])]), std=torch.tensor([scale for _ in range(x.shape[-1])])).to(device)
-                z = torch.clamp(z, min=-2*scale, max=2*scale)
+                z = torch.clamp(z, min=-clamp_scale * scale, max=clamp_scale * scale)
                 x[i, :, :] = x[i, :, :] + z
     elif len(x.shape) == 2:
         r = torch.rand(1)
         if r < prob:
             z = torch.normal(mean=torch.tensor([0.0 for _ in range(x.shape[-1])]), std=torch.tensor([scale for _ in range(x.shape[-1])])).to(device)
-            z = torch.clamp(z, min=-2*scale, max=2*scale)
+            z = torch.clamp(z, min=-clamp_scale * scale, max=clamp_scale * scale)
             x = x + z
     else:
         raise ValueError(f"Input tensor must have 2 or 3 dimensions (found {len(x.shape)})")
@@ -150,18 +152,19 @@ def noise(x, device='cpu', prob=0.5, scale=0.1):
     If x has 2 dimensions, we add noise to the whole tensor
     Modifies in place! Use clone if you need the original tensor unmodified
     """
+    clamp_scale = 3.0
     if len(x.shape) == 3:
         r = torch.rand(x.shape[0])
         for i in range(x.shape[0]):
             if r[i] < prob:
                 z = torch.normal(mean=torch.zeros_like(x[i, :, :]), std=(scale * torch.ones_like(x[i, :, :]))).to(device)
-                z = torch.clamp(z, min=-2*scale, max=2*scale)
+                z = torch.clamp(z, min=-clamp_scale * scale, max=clamp_scale * scale)
                 x[i, :, :] = x[i, :, :] + z
     elif len(x.shape) == 2:
         r = torch.rand(1)
         if r < prob:
             z = torch.normal(mean=torch.zeros_like(x), std=(scale * torch.ones_like(x))).to(device)
-            z = torch.clamp(z, min=-2*scale, max=2*scale)
+            z = torch.clamp(z, min=-clamp_scale * scale, max=clamp_scale * scale)
             x = x + z
     else:
         raise ValueError(f"Input tensor must have 2 or 3 dimensions (found {len(x.shape)})")
