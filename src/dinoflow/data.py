@@ -305,8 +305,9 @@ class BTMTubes(Dataset):
 
 class NoLabelTubes(Dataset):
 
-    def __init__(self, dirpath, min_events=2048, return_key="t"):
+    def __init__(self, dirpath, min_events=2048, return_key="t", transforms=None):
         self.dirpath = Path(dirpath)
+        self.transforms = transforms
         self.min_events = min_events
         self.samples = self._scandir()
         self.return_key = return_key
@@ -330,9 +331,14 @@ class NoLabelTubes(Dataset):
             item = torch.load(self.samples[i], weights_only=False)
             if item[self.return_key].shape[0] > self.min_events:
                 idx = torch.randperm(item[self.return_key].shape[0])[0:self.min_events]
-                return item[self.return_key][idx]
+                result = item[self.return_key][idx]
             else:
-                return item[self.return_key]
+                result = item[self.return_key]
+            
+            if self.transforms:
+                result = self.transforms(result)
+                
+            return result
         except Exception as ex:
             raise Exception(f"Failed to load item {self.samples[i]}: {str(ex)}")
     

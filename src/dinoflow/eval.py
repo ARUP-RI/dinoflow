@@ -81,16 +81,16 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
         logger.info(f"New positive samples: {len(train_labels[train_labels[labelkey] == 1])}")
 
     train_transforms = compose([
-        partial(shift, scale=0.1),
-        partial(scale, scale=0.1),
-        partial(noise, scale=0.25),
+        partial(shift, scale=0.5),
+        partial(scale, scale=0.5),
+        partial(noise, scale=2.0),
     ])
 
     val_transforms = compose([
     ])
 
     # Use the model's specified checkpoint monitor values instead of hardcoding them
-    checkpoint_monitor_val = model.checkpoint_monitor
+    checkpoint_monitor_val = model.checkpoint_monitor.strip()
     checkpoint_monitor_mode = model.checkpoint_mode
     comet_project = model.comet_project
 
@@ -135,9 +135,9 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
                             ModelCheckpoint(dirpath=f"dinoflow_eval_{run_name}",
                                             monitor=checkpoint_monitor_val, 
                                             mode=checkpoint_monitor_mode, 
-                                            save_top_k=3, 
+                                            save_top_k=5, 
                                             save_last=True, 
-                                            filename=run_name + "_{" + checkpoint_monitor_val + " :.3f}_" + "_{epoch}"),
+                                            filename=run_name + "_{" + checkpoint_monitor_val + ":.3f}_" + "_{epoch}"),
                             LearningRateMonitor(logging_interval='step'),
                         ],
                         logger=comet_logger)
