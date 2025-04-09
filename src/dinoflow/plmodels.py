@@ -12,8 +12,9 @@ from dinoflow import util
 
 
 class BinaryClassificationModel(pl.LightningModule):
-    def __init__(self, model, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False, ckpt_params=None):
+    def __init__(self, model, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False, ckpt_params=None, num_classes=1):
         super().__init__()
+        assert num_classes==1, "Only one class permitted for binary"
         self.model = model #
         self.min_lr = min_lr
         self.max_lr = max_lr
@@ -173,11 +174,11 @@ class BinaryClassificationModel(pl.LightningModule):
     # Add these methods to specify checkpoint monitoring preferences
     @property
     def checkpoint_monitor(self):
-        return 'fscore'
+        return 'val_loss'
     
     @property
     def checkpoint_mode(self):
-        return 'max'
+        return 'min'
         
     @property
     def comet_project(self):
