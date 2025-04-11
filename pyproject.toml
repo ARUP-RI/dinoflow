@@ -6,14 +6,17 @@ readme = "README.md"
 authors = [
     { name = "O'Fallon, Brendan", email = "brendan.o'fallon@aruplab.com" }
 ]
-requires-python = ">=3.9"
+requires-python = "==3.9.*"
 dependencies = [
     "comet-ml>=3.49.0",
     "ipykernel>=6.29.5",
+    "jax[cuda12]>=0.4.30",
+    "matplotlib>=3.9.4",
     "numpy>=2.0",
     "pandas>=2.2.3",
     "pytorch-lightning>=2.5.0.post0",
     "pyyaml>=6.0.2",
+    "scikit-image>=0.24.0",
     "torch>=2.6.0",
     "torchmetrics>=1.6.1",
     "typer",

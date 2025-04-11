@@ -302,6 +302,22 @@ class BTMTubes(Dataset):
     def itempath(self, i):
         return Path(self.paths[i])
 
+class SimpleTubeSet(Dataset):
+
+    def __init__(self, samples, transforms=None):
+        self.samples = samples
+        self.transforms = transforms
+    
+    def __len__(self):
+        return len(self.samples)
+    
+    def __getitem__(self, i):
+        x = self.samples[i]
+        if self.transforms:
+            x = self.transforms(x)
+        return x
+
+    
 
 class NoLabelTubes(Dataset):
 
