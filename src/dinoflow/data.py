@@ -4,6 +4,7 @@ from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 from glob import glob
 from functools import partial
+import numpy as np
 from collections import defaultdict
 from typing import List
 import logging
@@ -427,3 +428,94 @@ def collate_fn(items):
     The NoLabelTubes dataset returns a list of tensors which may have different sizes, so we can't stack them
     """
     return items
+
+import pandas as pd
+from torch.utils.data import Dataset
+from PIL import Image
+from pathlib import Path
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def pil_imgloader(path):
+    return Image.open(path).convert("RGB")
+
+
+def tensor_loader(path):
+    return torch.load(path, map_location='cpu', weights_only=False)
+
+def numpy_loader(path):
+    return np.load(path, allow_pickle=True)
+
+
+class CSVDataset(Dataset):
+    """
+    This class reads labels and images from a CSV file. By default, it expects the CSV to have at least two
+    columns: 'path' and 'label'. The 'path' column should contain the path to the image file (relative to rootdir), and the
+    'label' column should contain the corresponding label. The images are loaded using PIL by default, but you can
+    supply your own image loader function if you want to use a different library or method for loading images.
+
+    """
+
+    def __init__(
+        self,
+        rootdir,
+        csvpath,
+        reader=numpy_loader,
+        label_key="label",
+        path_key="path",
+        label_transforms=None,
+        transforms=None,
+        label_first=True,
+    ):
+        """
+
+        :param csvpath: CSV File with columns path and label, paths are relative to rootdir
+        :param transforms: Transforms for the image (or whatever) data
+        :param label_transforms: transforms for labels, if given
+        :param target_transforms: transforms for labels, if not provided labels are mapped to an integer
+        :param label_first: If True, returns (label, img), else return (img, label)
+        """
+        super().__init__()
+        self.rootdir = Path(rootdir)
+        self.reader = reader
+        self.label_key = label_key
+        self.img_key = path_key
+        assert self.rootdir.is_dir(), f"{self.rootdir} is not a directory"
+        self.data = pd.read_csv(csvpath)
+        assert label_key in self.data.columns, f"{label_key} not in {csvpath}"
+        assert path_key in self.data.columns, f"{path_key} not in {csvpath}"
+        self.transforms = transforms
+        self.label_transforms = label_transforms
+        self.label_first = label_first
+
+
+    def __len__(self):
+        return len(self.data)
+
+    def row_info(self, row_idx):
+        """Get the info of a row in the dataset, useful if your CSV has more columns than just path and label (e.g. accession)"""
+        return self.data.iloc[row_idx].to_dict()
+    
+    def __getitem__(self, item):
+        row = self.data.iloc[item]
+
+        try:
+            data = self.reader(self.rootdir / row[self.img_key])
+        except Exception as ex:
+            logger.error(f"Could not open item {row.path}")
+            raise ex
+
+        if self.transforms:
+            data = self.transforms(data)
+
+        label = row[self.label_key]
+        if self.label_transforms:
+            label = self.label_transforms(label)
+        
+        rowinfo = row.to_dict()
+        rowinfo['label'] = label
+        return data, rowinfo
+

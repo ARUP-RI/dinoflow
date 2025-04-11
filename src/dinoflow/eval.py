@@ -20,7 +20,7 @@ import numpy as np
 
 
 from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint, BTMTubes, load_btm_from_checkpoint
-from dinoflow.data import TubeData, collate_fn, compose, shift, scale, noise, standardize_range
+from dinoflow.data import TubeData, collate_fn, compose, shift, scale, noise, standardize_range, CSVDataset
 from dinoflow import util
 from dinoflow.plmodels import BinaryClassificationModel, ClassificationModel, RegressionModel
 
@@ -43,6 +43,9 @@ class ClassificationHead(nn.Module):
         )
 
     def forward(self, x):
+        layer_dtype = self.layers[0].weight.dtype
+        if x.dtype != layer_dtype:
+            x = x.to(layer_dtype)
         return self.layers(x)
     
 
@@ -54,6 +57,19 @@ class CombinedModel(nn.Module):
     
     def forward(self, x):
         return self.classifier(self.backbone(x.float()))
+
+
+class SOMCombinedModel(nn.Module):
+    def __init__(self, som, classifier):
+        super().__init__()
+        self.som = som    
+        self.classifier = classifier
+    
+    def forward(self, x):
+        bmus, _, _, _ = self.som.predict(x, num_workers=1, batch_size=10000, print_each=0, return_density=True)
+        projection, xi, yi = np.histogram2d(bmus[:, 0], bmus[:, 1], bins=(range(self.som.m + 1), range(self.som.n + 1)))
+        normed_projection = projection / np.sum(projection)
+        return self.classifier(torch.tensor(normed_projection).float().to(DEVICE))
 
 
 def load_featmeans_stds(conf, tube_type):
@@ -314,6 +330,79 @@ def continue_training(checkpoint: str,
     # Run training
     _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, 
                 labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor)
+    
+def flatten(x):
+    return x.flatten()
+
+def bool_label_transform(x):
+    return 1 if x else 0
+
+@app.command()
+def trainsomclassifier(train_csv: str,
+                       test_csv: str,
+                       run_name: str,
+                       mode: str = 'binary',
+                       dataroot: str = ".",
+                       path_key: str = "path",
+                       label_key: str = "label",
+                       model_dim: int = 1024,
+                       batch_size: int = 16,
+                       epochs: int = 50,
+                       max_lr: float = 0.0001,
+                       num_classes: int = 2,
+                       positive_repeat_factor: int = 1):
+    """
+    Train a classifier on projections from a SOM. Really this doesn't know anything about SOMs, the Dataset
+    just reads precomputed projections, which I suppose could be from anything.
+    """
+    
+    assert mode in ('binary', 'multiclass', 'regression'), f"Unknown mode: {mode}"
+    clfhead = ClassificationHead(model_dim, 1 if mode == 'binary' or mode == 'regression' else num_classes)
+    
+    
+
+    traindata = CSVDataset(rootdir=dataroot, csvpath=train_csv, label_key=label_key, path_key=path_key, label_transforms=bool_label_transform, transforms=flatten)
+    trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=8)
+
+    valdata = CSVDataset(rootdir=dataroot, csvpath=test_csv, label_key=label_key, path_key=path_key, label_transforms=bool_label_transform, transforms=flatten)
+    valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=8)
+
+    if mode == 'binary':
+        model = BinaryClassificationModel(clfhead, emit_predictions=True, max_lr=max_lr)
+    elif mode == 'multiclass':
+        model = ClassificationModel(clfhead, num_classes=num_classes, emit_predictions=True, max_lr=max_lr)
+    elif mode == 'regression':
+        model = RegressionModel(clfhead, emit_predictions=True, max_lr=max_lr)
+        assert positive_repeat_factor == 1
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
+    checkpoint_monitor_val = model.checkpoint_monitor.strip()
+    checkpoint_monitor_mode = model.checkpoint_mode
+    comet_project = model.comet_project
+
+    comet_logger = CometLogger(
+            workspace="brendan",  # Optional
+            project=comet_project,  # Optional
+            name=run_name,  # Optional
+            save_dir="dinoflow_classifier_runs",  # Optional
+        )
+    
+    trainer = pl.Trainer(max_epochs=epochs,
+                    accelerator='auto',
+                    precision="bf16-mixed",
+                    callbacks=[
+                        ModelCheckpoint(dirpath=f"dinoflow_SOM_{run_name}",
+                                        monitor=checkpoint_monitor_val, 
+                                        mode=checkpoint_monitor_mode, 
+                                        save_top_k=5, 
+                                        save_last=True, 
+                                        filename=run_name + "_{" + checkpoint_monitor_val + ":.3f}_" + "_{epoch}"),
+                        LearningRateMonitor(logging_interval='step'),
+                    ],
+                    logger=comet_logger)
+
+    trainer.fit(model, trainloader, valloader)
 
 
 @app.command()

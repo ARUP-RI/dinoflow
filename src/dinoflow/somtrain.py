@@ -11,8 +11,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-# from dinoflow.sombb.som import SOM
-from dinoflow.quicksom import SOM, jax_collate
+from dinoflow.sombb.quicksom import SOM
 from dinoflow import data
 import typer
 
@@ -37,16 +36,6 @@ def collate_fn(batch):
     labels = torch.zeros(batch.shape[0], dtype=torch.long)
     return labels.cpu().numpy(), batch.flatten(start_dim=0, end_dim=1).cpu().numpy() # Flatten batch and event dim, result will be [batch_size * evets per sample, 13]
 
-
-def custom_collate_np(batch):
-    """
-    cat all tensors along rows
-    """
-    batch_array = torch.concatenate(batch, 0) if isinstance(batch, list) else batch
-    batch_tensor = torch.tensor(batch_array, device="cpu")
-    batch_labels = np.zeros(batch_array.shape[0])
-
-    return batch_labels, batch_tensor.cpu().numpy()
 
 def init_centroids(dataset, m, n):
     """
@@ -112,7 +101,7 @@ def train_som(conf, run_name):
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(os.path.join(output_dir, f"{run_name}_som_config.yaml"), 'w') as f:
         yaml.dump(conf, f)
-        
+
     os.chdir(output_dir)
     som = SOM(som_conf['size'],
                 som_conf['size'], 
@@ -157,39 +146,43 @@ def infer(config: str, tubedata: str, tube_type: str, ckpt: str):
     features = centroids_data['centroids'].shape[1]
     centroids = centroids_data['centroids'].reshape(m * n, features)
 
+    data_paths = []
     if tubedata.endswith(".pt"):
-        td = torch.load(tubedata, weights_only=False)
-        dataset = data.SimpleTubeSet([td[tube_type][0:50000,:]], transforms=transforms)
+        data_paths.append(tubedata)
+        
+    elif Path(tubedata).is_dir():
+        data_paths.extend(Path(tubedata).glob("*.pt"))
+
     else:
-        raise ValueError("Can't handle this right now")
-    loader = DataLoader(dataset,
-                batch_size=conf['som']['batch_size'],
+        raise ValueError(f"Invalid tubedata: {tubedata}")
+        
+
+    som = SOM(m, n, features, centroids=centroids)
+    
+    for i, path in enumerate(data_paths):
+        sample_name = Path(path).stem
+        logger.info(f"Processing sample {i + 1}/{len(data_paths)}: {sample_name}")
+
+        td = torch.load(path, weights_only=False)
+        dataset = data.SimpleTubeSet([td[tube_type][0:100000,:]], transforms=transforms)
+        loader = DataLoader(dataset,
+                batch_size=1,
                 shuffle=False,
                 collate_fn=collate_fn,
                 num_workers=1,
-    )
-
-    som = SOM(m, n, 
-        features, 
-        centroids=centroids,
         )
-    
-    # Load data, don't forget to normalize, then project
-    bmus, errs, labels, density = som.predict(loader, num_workers=1, batch_size=10000, print_each=10000, return_density=True)
-    dim1_data = bmus[:, 0]
-    dim2_data = bmus[:, 1]
-    projection, xi, yi = np.histogram2d(dim1_data, dim2_data, bins=(range(m + 1), range(n + 1)))
-    normed_projection = projection / np.max(projection)
-    for i in range(m):
-        for j in range(n):
-            print(f"{int(100 * normed_projection[i, j]) :3d}", end=" ")
-        print()
+        # Load data, don't forget to normalize, then project
+        bmus, errs, labels = som.predict(loader, num_workers=1, batch_size=64000, print_each=0)
+        dim1_data = bmus[:, 0]
+        dim2_data = bmus[:, 1]
+        projection, xi, yi = np.histogram2d(dim1_data, dim2_data, bins=(range(m + 1), range(n + 1)))
+        normed_projection = projection / np.max(projection)
+        for i in range(m):
+            for j in range(n):
+                print(f"{int(100 * normed_projection[i, j]) :3d}", end=" ")
+            print()
+        np.save(f"{sample_name}_projection.npy", projection)
 
-
-    plt.figure(figsize=(8, 6))
-    plt.imshow(projection, cmap='viridis')
-    plt.tight_layout()
-    plt.savefig("projection.png")
     
 
 @app.command()
