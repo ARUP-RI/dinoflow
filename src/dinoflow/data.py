@@ -485,8 +485,13 @@ class CSVDataset(Dataset):
         self.img_key = path_key
         assert self.rootdir.is_dir(), f"{self.rootdir} is not a directory"
         self.data = pd.read_csv(csvpath)
-        assert label_key in self.data.columns, f"{label_key} not in {csvpath}"
-        assert path_key in self.data.columns, f"{path_key} not in {csvpath}"
+        assert label_key in self.data.columns, f"{label_key} not in {self.data.columns}"
+
+        if isinstance(self.img_key, str):
+            assert self.img_key in self.data.columns, f"{self.img_key} not in {self.data.columns}"
+        elif isinstance(self.img_key, list):
+            for key in self.img_key:
+                assert key in self.data.columns, f"{key} not in {self.data.columns}"
         self.transforms = transforms
         self.label_transforms = label_transforms
         self.label_first = label_first
@@ -503,7 +508,10 @@ class CSVDataset(Dataset):
         row = self.data.iloc[item]
 
         try:
-            data = self.reader(self.rootdir / row[self.img_key])
+            if isinstance(self.img_key, list):
+                data = [self.reader(self.rootdir / row[key]) for key in self.img_key]
+            else:
+                data = self.reader(self.rootdir / row[self.img_key])
         except Exception as ex:
             logger.error(f"Could not open item {row.path}")
             raise ex

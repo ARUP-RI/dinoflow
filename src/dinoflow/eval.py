@@ -337,6 +337,14 @@ def flatten(x):
 def bool_label_transform(x):
     return 1 if x else 0
 
+def flat_and_concat(x):
+    if isinstance(x, list):
+        y = [torch.tensor(t.flatten()) for t in x]
+        x = torch.cat(y, dim=0)
+        return x
+    else:
+        return x.flatten()
+
 @app.command()
 def trainsomclassifier(train_csv: str,
                        test_csv: str,
@@ -348,8 +356,9 @@ def trainsomclassifier(train_csv: str,
                        model_dim: int = 1024,
                        batch_size: int = 16,
                        epochs: int = 50,
-                       max_lr: float = 0.0001,
+                       max_lr: float = 0.00002,
                        num_classes: int = 2,
+                       workers: int = 8,
                        positive_repeat_factor: int = 1):
     """
     Train a classifier on projections from a SOM. Really this doesn't know anything about SOMs, the Dataset
@@ -357,15 +366,28 @@ def trainsomclassifier(train_csv: str,
     """
     
     assert mode in ('binary', 'multiclass', 'regression'), f"Unknown mode: {mode}"
+    
+    label_transform = float
+    if mode == "binary":
+        label_transform = bool_label_transform
+
+    # To support 3 tubes, we allow the path_key thing to be a comma-separated list of keys into things in the label CSV
+    # Typically this will be something like b_projection,t_projection,m_projection or similar
+    # The CSVDataset grabs and loads each element and returns them in a list
+    if "," in path_key:
+        logger.info(f"Splitting path_key: {path_key}")
+        path_key = path_key.split(",")
+        model_dim = model_dim * len(path_key)
+        logger.info(f"Adjusting model_dim to: {model_dim}")
+
+
     clfhead = ClassificationHead(model_dim, 1 if mode == 'binary' or mode == 'regression' else num_classes)
-    
-    
 
-    traindata = CSVDataset(rootdir=dataroot, csvpath=train_csv, label_key=label_key, path_key=path_key, label_transforms=bool_label_transform, transforms=flatten)
-    trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=8)
+    traindata = CSVDataset(rootdir=dataroot, csvpath=train_csv, label_key=label_key, path_key=path_key, label_transforms=label_transform, transforms=flat_and_concat)
+    trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=workers)
 
-    valdata = CSVDataset(rootdir=dataroot, csvpath=test_csv, label_key=label_key, path_key=path_key, label_transforms=bool_label_transform, transforms=flatten)
-    valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=8)
+    valdata = CSVDataset(rootdir=dataroot, csvpath=test_csv, label_key=label_key, path_key=path_key, label_transforms=label_transform, transforms=flat_and_concat)
+    valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=workers)
 
     if mode == 'binary':
         model = BinaryClassificationModel(clfhead, emit_predictions=True, max_lr=max_lr)

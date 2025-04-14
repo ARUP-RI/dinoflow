@@ -128,7 +128,7 @@ def train_som(conf, run_name):
     return som, learning_error
 
 @app.command()
-def infer(config: str, tubedata: str, tube_type: str, ckpt: str):
+def infer(config: str, tubedata: str, tube_type: str, ckpt: str, destdir: str = "."):
     assert tube_type in ("b", "t", "m")
     
     with open(config, 'r') as f:
@@ -139,6 +139,9 @@ def infer(config: str, tubedata: str, tube_type: str, ckpt: str):
     transforms = partial(
         data.standardize_range, means=feat_means, stds=feat_stds
     )
+
+    destdir = Path(destdir)
+    destdir.mkdir(parents=True, exist_ok=True)
 
     with open(ckpt, mode='rb') as fh:
         centroids_data = pickle.load(fh)
@@ -181,7 +184,7 @@ def infer(config: str, tubedata: str, tube_type: str, ckpt: str):
             for j in range(n):
                 print(f"{int(100 * normed_projection[i, j]) :3d}", end=" ")
             print()
-        np.save(f"{sample_name}_projection.npy", projection)
+        np.save(f"{destdir}/{sample_name}_projection.npy", projection)
 
     
 

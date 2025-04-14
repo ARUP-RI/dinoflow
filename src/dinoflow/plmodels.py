@@ -3,6 +3,7 @@ import pytorch_lightning as pl
 from torchmetrics import MeanMetric, MeanSquaredError, MeanAbsoluteError, R2Score, ConfusionMatrix
 from torchmetrics.classification import BinaryAccuracy
 from torchmetrics.aggregation import MeanMetric, SumMetric
+import torch.nn.functional as F
 
 from sklearn.metrics import roc_curve, precision_recall_curve, auc, average_precision_score
 import numpy as np
@@ -12,7 +13,7 @@ from dinoflow import util
 
 
 class BinaryClassificationModel(pl.LightningModule):
-    def __init__(self, model, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False, ckpt_params=None, num_classes=1):
+    def __init__(self, model, min_lr=0.00001, max_lr=0.0001, warmup_iters=50, lr_decay_iters=250, emit_predictions=False, ckpt_params=None, num_classes=1):
         super().__init__()
         assert num_classes==1, "Only one class permitted for binary"
         self.model = model #
@@ -343,7 +344,8 @@ class RegressionModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, rowinfo = batch
         labels = rowinfo['label']
-        preds = F.sigmoid(self(x).squeeze(1)) * 100.0
+        logits = self(x) / 10.0
+        preds = F.sigmoid(logits.squeeze(1)) * 100.0
         loss = F.mse_loss(preds, labels.float())
         self.training_loss_mean.update(loss)
         return loss
@@ -357,7 +359,8 @@ class RegressionModel(pl.LightningModule):
         x, rowinfo = batch
         labels = rowinfo['label']
         accs = rowinfo['ACCESSION']
-        preds = F.sigmoid(self(x).squeeze(1)) * 100.0
+        logits = self(x) / 10.0
+        preds = torch.sigmoid(logits.squeeze(1)) * 100.0
         loss = F.mse_loss(preds, labels.float())
         
         # Store predictions and labels for later use
