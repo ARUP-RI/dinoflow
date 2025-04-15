@@ -120,11 +120,11 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
         logger.info(f"Negative samples: {len(traindata.positive_negative_samples()[1])}")
         assert len(traindata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
     
-    trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=16)    
+    trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=4)    
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
 
     valdata = TubeData(test_labels, tubes_to_return=tubes, events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=val_transforms)
-    valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=8)
+    valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=4)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
     
     # Check if we have any positive samples for classification models in the validation set
@@ -356,7 +356,7 @@ def trainsomclassifier(train_csv: str,
                        model_dim: int = 1024,
                        batch_size: int = 16,
                        epochs: int = 50,
-                       max_lr: float = 0.00002,
+                       max_lr: float = 0.0002,
                        num_classes: int = 2,
                        workers: int = 8,
                        positive_repeat_factor: int = 1):
@@ -426,6 +426,41 @@ def trainsomclassifier(train_csv: str,
 
     trainer.fit(model, trainloader, valloader)
 
+@app.command()
+def train_deepcytof(train_csv: str,
+                       test_csv: str,
+                       run_name: str,
+                       tube_type: str,
+                       mode: str = 'binary',
+                       dataroot: str = ".",
+                       label_key: str = "label",
+                       batch_size: int = 16,
+                       epochs: int = 50,
+                       max_lr: float = 0.0002,
+                       num_classes: int = 2,
+                       events: int = 8192,
+                       positive_repeat_factor: int = 1):
+    from dinoflow.cnnmodel import DeepCyTof
+    torch.multiprocessing.set_sharing_strategy('file_system')
+    
+    if "," in tube_type:
+        tube_type = tube_type.split(",")
+
+    assert mode in ('binary', 'multiclass', 'regression'), f"Unknown mode: {mode}"
+    model = DeepCyTof(num_features=13, pool_height=events)
+    model = model.to(DEVICE)
+
+    if mode == 'binary':
+        model = BinaryClassificationModel(model, emit_predictions=False, max_lr=max_lr)
+    elif mode == 'multiclass':
+        model = ClassificationModel(model, num_classes=num_classes, emit_predictions=False, max_lr=max_lr)
+    elif mode == 'regression':
+        model = RegressionModel(model, emit_predictions=False, max_lr=max_lr)
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
+    _run_trainer(model, train_csv, test_csv, tube_type, run_name, label_key, dataroot, events, batch_size, epochs, positive_repeat_factor)
+   
 
 @app.command()
 def predict(checkpoint: str,

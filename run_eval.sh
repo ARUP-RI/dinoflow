@@ -7,6 +7,11 @@ export OMP_NUM_THREADS=8
 
 export TORCH_NCCL_TRACE_BUFFER_SIZE=1 # This is for debugging NCCL issues
 
+# This script is for training a classifier head using a *single* dinoflow trained backbone
+# The first script argument is the run name, used for comet logs and saved checkpoint data
+# CSVs must contain paths to the tube data under the 'path' column
+# The targets to train for are given by the --labelkey argument (AML below), which must also be in the CSV
+# --mode can be binary, multiclass, or regression (for viability training)
 
 uv run src/dinoflow/eval.py train \
     $1 \
