@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-export CUDA_VISIBLE_DEVICES=0,1,6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 
 export OMP_NUM_THREADS=8
@@ -13,11 +13,14 @@ export TORCH_NCCL_TRACE_BUFFER_SIZE=1 # This is for debugging NCCL issues
 # The targets to train for are given by the --labelkey argument (AML below), which must also be in the CSV
 # --mode can be binary, multiclass, or regression (for viability training)
 
+#/home/22319/data/brendan/dinoflow/viabs_250304_train_with_projections.csv \
+#    /home/22319/data/brendan/dinoflow/viabs_250304_test_with_projections.csv \
+
 uv run src/dinoflow/eval.py train \
     $1 \
     /home/22319/data/brendan/dinoflow/casedx_2024-08-21_noreport_train_with_m_projections.csv \
     /home/22319/data/brendan/dinoflow/casedx_2024-08-21_noreport_test_with_m_projections.csv \
-    /home/22319/data/brendan/dinoflow/checkpoints/b_p4k_fix_koleo/b_p4k_fix_koleo_epoch99.pt \
+    /home/22319/data/brendan/dinoflow/checkpoints/m_p4k_cont_lessaug/m_p4k_cont_lessaug_epoch80.pt \
     conf.yaml \
     --labelkey 'AML' \
     --mode 'binary' \

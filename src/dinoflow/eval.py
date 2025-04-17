@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
-from pytorch_lightning.loggers import CometLogger
+from pytorch_lightning.loggers import CometLogger, CSVLogger
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
 from torchmetrics.regression import MeanSquaredError, MeanAbsoluteError, R2Score
@@ -143,12 +143,13 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
             experiment_name=run_name,  # Optional
         )
 
+    checkpoint_dir = f"dinoflow_eval_{run_name}"
     logger.info(f"Checkpoint monitor: {checkpoint_monitor_val}, mode: {checkpoint_monitor_mode}")
     trainer = pl.Trainer(max_epochs=epochs,
                         accelerator='auto',
                         precision="bf16-mixed",
                         callbacks=[
-                            ModelCheckpoint(dirpath=f"dinoflow_eval_{run_name}",
+                            ModelCheckpoint(dirpath=checkpoint_dir,
                                             monitor=checkpoint_monitor_val, 
                                             mode=checkpoint_monitor_mode, 
                                             save_top_k=5, 
@@ -156,7 +157,8 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
                                             filename=run_name + "_{" + checkpoint_monitor_val + ":.3f}_" + "_{epoch}"),
                             LearningRateMonitor(logging_interval='step'),
                         ],
-                        logger=comet_logger)
+                        logger=[comet_logger, CSVLogger(save_dir=checkpoint_dir, name=run_name)],
+    )
 
     trainer.fit(model, trainloader, valloader)
 
@@ -410,11 +412,12 @@ def trainsomclassifier(train_csv: str,
             save_dir="dinoflow_classifier_runs",  # Optional
         )
     
+    checkpoint_dir = f"dinoflow_{run_name}"
     trainer = pl.Trainer(max_epochs=epochs,
                     accelerator='auto',
                     precision="bf16-mixed",
                     callbacks=[
-                        ModelCheckpoint(dirpath=f"dinoflow_SOM_{run_name}",
+                        ModelCheckpoint(dirpath=checkpoint_dir,
                                         monitor=checkpoint_monitor_val, 
                                         mode=checkpoint_monitor_mode, 
                                         save_top_k=5, 
@@ -422,7 +425,7 @@ def trainsomclassifier(train_csv: str,
                                         filename=run_name + "_{" + checkpoint_monitor_val + ":.3f}_" + "_{epoch}"),
                         LearningRateMonitor(logging_interval='step'),
                     ],
-                    logger=comet_logger)
+                    logger=[comet_logger, CSVLogger(save_dir=checkpoint_dir, name=run_name)])
 
     trainer.fit(model, trainloader, valloader)
 
@@ -460,6 +463,73 @@ def train_deepcytof(train_csv: str,
         raise ValueError(f"Unknown mode: {mode}")
 
     _run_trainer(model, train_csv, test_csv, tube_type, run_name, label_key, dataroot, events, batch_size, epochs, positive_repeat_factor)
+   
+@app.command()
+def train_abmil(train_csv: str,
+                       test_csv: str,
+                       run_name: str,
+                       tube_type: str,
+                       mode: str = 'binary',
+                       dataroot: str = ".",
+                       label_key: str = "label",
+                       batch_size: int = 16,
+                       epochs: int = 50,
+                       max_lr: float = 0.0002,
+                       num_classes: int = 2,
+                       events: int = 8192,
+                       positive_repeat_factor: int = 1):
+    from dinoflow.models import IlseBagModel
+    torch.multiprocessing.set_sharing_strategy('file_system')
+    
+    if "," in tube_type:
+        tube_type = tube_type.split(",")
+
+    assert mode in ('binary', 'multiclass', 'regression'), f"Unknown mode: {mode}"
+    model = IlseBagModel(13, model_embed_dim=128, output_classes=1, proto_dim=256, bag_classes=4)
+    model = model.to(DEVICE)
+
+    if mode == 'binary':
+        model = BinaryClassificationModel(model, emit_predictions=False, max_lr=max_lr)
+    elif mode == 'multiclass':
+        model = ClassificationModel(model, num_classes=num_classes, emit_predictions=False, max_lr=max_lr)
+    elif mode == 'regression':
+        model = RegressionModel(model, emit_predictions=False, max_lr=max_lr)
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
+    _run_trainer(model, train_csv, test_csv, tube_type, run_name, label_key, dataroot, events, batch_size, epochs, positive_repeat_factor)
+
+
+@app.command()
+def train_abmil3tube(train_csv: str,
+                       test_csv: str,
+                       run_name: str,
+                       mode: str = 'binary',
+                       dataroot: str = ".",
+                       label_key: str = "label",
+                       batch_size: int = 16,
+                       epochs: int = 50,
+                       max_lr: float = 0.0002,
+                       num_classes: int = 2,
+                       events: int = 8192,
+                       positive_repeat_factor: int = 1):
+    from dinoflow.models import Ilse3TubeModel
+    torch.multiprocessing.set_sharing_strategy('file_system')
+
+    assert mode in ('binary', 'multiclass', 'regression'), f"Unknown mode: {mode}"
+    model = Ilse3TubeModel(13, model_embed_dim=128, output_classes=1, proto_dim=256, bag_classes=1)
+    model = model.to(DEVICE)
+
+    if mode == 'binary':
+        model = BinaryClassificationModel(model, emit_predictions=False, max_lr=max_lr)
+    elif mode == 'multiclass':
+        model = ClassificationModel(model, num_classes=num_classes, emit_predictions=False, max_lr=max_lr)
+    elif mode == 'regression':
+        model = RegressionModel(model, emit_predictions=False, max_lr=max_lr)
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
+    _run_trainer(model, train_csv, test_csv, ["b", "t", "m"], run_name, label_key, dataroot, events, batch_size, epochs, positive_repeat_factor)
    
 
 @app.command()

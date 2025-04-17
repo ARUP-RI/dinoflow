@@ -224,3 +224,97 @@ class BTMTubes(nn.Module):
 
 
 
+class IlseBagEncoder(nn.Module):
+    """
+    For now the simple version where we embed the bag into a single 1D vector.
+    Matrices vee, ewe, and dubya are as defined in Eq 9 of Ilse et al.
+    """
+
+    def __init__(self, embedding_dim, proto_dim, classes=1):
+        """
+        proto_dim is denoted L in Ilse et al, in text surrounding Eq 8 & 9.
+        Roughly, L is the number of "prototype" embeddings to learn
+        """
+        super().__init__()
+        self.vee = nn.Linear(embedding_dim, proto_dim, bias=False)
+        self.ewe = nn.Linear(embedding_dim, proto_dim, bias=False)
+        self.dubya = nn.Linear(proto_dim, classes, bias=False)
+        self.proto_dim = proto_dim
+
+    def forward(self, x):
+        """
+        Assumes input x is a bag of instances of shape
+        [batch size, num inst in bag, embedding dim].
+        Returns a batch of embedding vectors, i.e., a tensor of
+        shape [batchsize, embedding dim]
+        """
+
+        vb = F.tanh(self.vee(x)) * F.sigmoid(self.ewe(x)) # batch size x bag size x proto_dim
+        attn = self.dubya(
+            vb
+        )  # batch size x bag size x 1
+
+        # next normalize the attn wts for each bag, but don't squeeze away the
+        # bag size dimension until after we mult the attn weights by the bag x
+
+        attn = F.softmax(attn, dim=-2) # attn has shape [batch, event, classes]
+        #attn = F.sigmoid(attn)  # sigmoid, no dim needed
+
+        # bag_embeddings have shape: batch size x embedding_dim
+        bag_embeddings = (attn.permute((0, 2, 1)) @ x).squeeze(dim=1) # we multiple [batch, embedding_dim, event] @ [batch, event] to get [batch, embedding_dim]
+        # cast up now that we have small matrices b/c cross entropy loss
+        # can't handle float16
+        return bag_embeddings, attn
+
+
+class IlseBagModel(nn.Module):
+
+    def __init__(self, num_features, model_embed_dim, output_classes=1, proto_dim=256, bag_classes=1):
+        super().__init__()
+        self.instance_encoder = MLP(num_features, model_embed_dim, model_embed_dim, n_layers=2, residual=False)
+        self.mil_attn = IlseBagEncoder(model_embed_dim, proto_dim, bag_classes)
+        self.output_head = MLP(model_embed_dim * bag_classes, 128, output_classes, n_layers=2, residual=False)
+
+    def forward(self, x):
+        x = self.instance_encoder(x)
+        x, attn = self.mil_attn(x)
+        x = self.output_head(x.flatten(start_dim=1))
+        return x
+    
+
+class Ilse3TubeModel(nn.Module):
+
+    def __init__(self, num_features, model_embed_dim, output_classes=1, proto_dim=256, bag_classes=1):
+        super().__init__()
+        self.bag_output_dim = 128
+        self.m_model = IlseBagModel(num_features, model_embed_dim, self.bag_output_dim, proto_dim=proto_dim, bag_classes=bag_classes)
+        self.b_model = IlseBagModel(num_features, model_embed_dim, self.bag_output_dim, proto_dim=proto_dim, bag_classes=bag_classes)
+        self.t_model = IlseBagModel(num_features, model_embed_dim, self.bag_output_dim, proto_dim=proto_dim, bag_classes=bag_classes)
+
+        self.output_head = MLP(self.bag_output_dim * 3, 128, output_classes, n_layers=2, residual=False)
+
+    def forward(self, eventdict):
+        b_events = eventdict['b'].float()
+        t_events = eventdict['t'].float()
+        m_events = eventdict['m'].float()
+
+        b_out = self.b_model(b_events)
+        t_out = self.t_model(t_events)
+        m_out = self.m_model(m_events)
+
+        x = torch.cat((b_out, t_out, m_out), dim=1) 
+        x = self.output_head(x.flatten(start_dim=1))
+        return x
+    
+
+
+if __name__=="__main__":
+    m = Ilse3TubeModel(13, model_embed_dim=128, output_classes=1, proto_dim=256, bag_classes=4)
+    eventdict = {
+        'b': torch.randn(32, 10, 13),
+        't': torch.randn(32, 10, 13),
+        'm': torch.randn(32, 10, 13)
+    }
+
+    y = m(eventdict)
+    print(y.shape)
