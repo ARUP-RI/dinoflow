@@ -1,14 +1,15 @@
 #!/usr/bin/env python
 
 import sys
-from typing import List
+from typing import List, Callable, Optional, Union
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
 import yaml
 from glob import glob
 
-from torch.cuda.amp import GradScaler
+from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 from functools import partial
 import typer
@@ -23,7 +24,7 @@ import logging
 
 from dinoflow.models import TubeEncoder, TubeEncoderWithProjection
 from dinoflow import data
-from dinoflow.loss import KoLeoLoss, CosineSimLoss, SelfCosineSimLoss
+from dinoflow.loss import KoLeoLoss, CosineSimLoss, SelfCosineSimLoss, KDELoss
 from dinoflow.data import scale, shift, shuffle, compose, noise, standardize_range, subsample_events, NoLabelTubes, subsample_batch
 
 from dinoflow.util import WarmupCosineLRScheduler, random_sample, LinearScheduler
@@ -51,6 +52,20 @@ if MASTER_PROCESS:
 
 else:
     experiment = None
+
+
+
+@dataclass
+class TrainingConfig:
+    teacher_events: int
+    student_events: int
+    student_reps: int
+    batch_size: int
+    teacher_momentum: float
+    center_momentum: float
+    loss_weight_sched: LinearScheduler
+    lr_sched: LRScheduler
+    temperature_sched: LinearScheduler
 
 
 def cosine_similarity_matrix(X):
@@ -123,7 +138,13 @@ def student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_
     return teacher_events, all_student_events
 
 
-def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_student_events, n_student_reps, center_mo, teacher_mo_schedule, teacher_center, lr_schedule, koleo_loss_schedule, student_augs=None, teacher_augs=None, shared_augs=None):
+def dino_epoch(loader: DataLoader, 
+               teacher: nn.Module, 
+               student: nn.Module, 
+               optimizer: torch.optim.Optimizer, 
+               training_conf: TrainingConfig, 
+               teacher_center: torch.Tensor, 
+               student_augs=None, teacher_augs=None, shared_augs=None):
     """
     Conduct a single DINO epoch
     For each batch, augment the data and pass to the student and send un-augmented data to the teacher, the loss
@@ -139,6 +160,7 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
     yt_other_loss_sum = 0
     dino_loss_sum = 0
     koleoloss = KoLeoLoss(device=DEVICE)
+    kdeloss = KDELoss()
     # cos_sim_loss = CosineSimLoss(device=DEVICE)
     proto_cosim_loss = SelfCosineSimLoss()
     cs_loss_sum = 0
@@ -148,11 +170,11 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
     report_freq = 10
     for i, batch in enumerate(loader):
         actual_batch_size = len(batch)
-        n_teacher_events = int(teacher_events_schedule.current_value())
+        n_teacher_events = int(training_conf.teacher_events)
         optimizer.zero_grad()
         logger.debug("Generating teacher and student samples")
-        teacher_events, student_events = student_teacher_sample(batch, n_teacher_events, n_student_events, n_student_reps, student_augs=student_augs, teacher_augs=teacher_augs, shared_augs=shared_augs)
-        koleo_loss_weight = koleo_loss_schedule.current_value()
+        teacher_events, student_events = student_teacher_sample(batch, n_teacher_events, training_conf.student_events, training_conf.student_reps, student_augs=student_augs, teacher_augs=teacher_augs, shared_augs=shared_augs)
+        koleo_loss_weight = training_conf.loss_weight_sched.current_value()
         actual_batch_size = teacher_events.shape[0]
 
         with torch.amp.autocast(enabled=enable_autocast, device_type=device_type):
@@ -161,16 +183,19 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
             y_s  = student(student_events.to(DEVICE).float())
             logger.debug("Running teacher")
             y_t = teacher(teacher_events.to(DEVICE).float())
-            y_t = y_t.repeat(n_student_reps, 1)
+            y_t = y_t.repeat(training_conf.student_reps, 1)
 
             logger.debug("Computing loss")
-            dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=0.2, t_temp=0.05)
+            dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=0.2, t_temp=training_conf.temperature_sched.current_value())
             koleo_batch_loss = torch.tensor(0.0).to(DEVICE)
             #Important to loop over n_student_reps here, since we don't want to include the same sample twice in the loss
             # (remember KoLeo loss looks at the two nearest neighbors, which will probably be the same sample if we include them both)
-            for nr in range(n_student_reps):
-                koleo_batch_loss += koleoloss(y_s[(nr * actual_batch_size):((nr + 1) * actual_batch_size), :])
-            koleo_loss = koleo_batch_loss / n_student_reps
+            for nr in range(training_conf.student_reps):
+                # test_kde_loss = kdeloss(y_s[(nr * actual_batch_size):((nr + 1) * actual_batch_size), :])
+                # test_koleo_loss = koleoloss(y_s[(nr * actual_batch_size):((nr + 1) * actual_batch_size), :])
+                # logger.info(f"Test kde loss: {test_kde_loss.item()}, test koleo loss: {test_koleo_loss.item()}")
+                koleo_batch_loss += kdeloss(y_s[(nr * actual_batch_size):((nr + 1) * actual_batch_size), :])
+            koleo_loss = koleo_batch_loss / training_conf.student_reps
             
             protot_cosim_loss = torch.tensor(0) #proto_cosim_loss(student.module.sdpa_prototype_emb_stack.L)
             
@@ -186,13 +211,12 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
-        if lr_schedule:
-            lr_schedule.step()
 
-        teacher_events_schedule.step()
-        teacher_mo_schedule.step()
-        koleo_loss_schedule.step()
-        param_mo = teacher_mo_schedule.current_value()
+        training_conf.lr_sched.step()
+        training_conf.loss_weight_sched.step()
+        training_conf.temperature_sched.step()
+        
+        param_mo = training_conf.teacher_momentum
         # Update centering and teacher weights
         if i % report_freq == 0:
             with torch.no_grad():
@@ -201,11 +225,13 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
 
                 # We are interested in how similar two sets of events sampled from the same tube are compared to two sets of events from different tubes, when 
                 # run through the teacher model. 
-                s_events = student_events[0:actual_batch_size, :, :]
+                t2_events = subsample_batch(batch, n_teacher_events)
+                assert t2_events.shape[0] == actual_batch_size, f"Whoa, didn't get batch size: {t2_events.shape}, but actual batch size: {actual_batch_size}"
+                # s_events = student_events[0:actual_batch_size, :, :]
                 t_events = teacher_events[0:actual_batch_size, :, :]
-                y0 = teacher(s_events.to(DEVICE).float())
+                y0 = teacher(t2_events.to(DEVICE).float())
                 y1 = teacher(t_events.to(DEVICE).float())
-                assert y0.shape[0] == y1.shape[0], f"Whoa, didn't get same output size! s_events: {s_events.shape}, t_events: {t_events.shape}, orig student events: {student_events.shape}, orig teacher events: {teacher_events.shape}, batch: {len(batch)}"
+                assert y0.shape[0] == y1.shape[0], f"Whoa, didn't get same output size! s_events: {t2_events.shape}, t_events: {t_events.shape}, orig student events: {student_events.shape}, orig teacher events: {teacher_events.shape}, batch: {len(batch)}"
                 self_cos_sim, other_cosim = teacher_student_cosine_similarity(y0, y1, emit=MASTER_PROCESS)
                 yt_self_loss_sum += self_cos_sim.item()
                 yt_other_loss_sum += other_cosim.item()
@@ -213,14 +239,14 @@ def dino_epoch(loader, teacher, student, optimizer, teacher_events_schedule, n_s
                 logger.info(f"Batch {i}, loss: {loss.item() :.4f} dino: {dinoloss.item() :.4f} cos sim: {cos_sim.mean().item() :.4f} self_cosim: {self_cos_sim.item() :.4f} other_cosim: {other_cosim.item() :.4f} teacher mo: {param_mo :.4f} teacher events: {n_teacher_events} kl weight: {koleo_loss_weight :.5f}")
                 
 
-        teacher_center = center_mo * teacher_center + (1 - center_mo) * y_t.mean(dim=0)
+        teacher_center = training_conf.center_momentum * teacher_center + (1 - training_conf.center_momentum) * y_t.mean(dim=0)
         dist_tot = 0
         param_tot = 0
         for param_s, param_t in zip(student.parameters(), teacher.parameters()):
             d = param_t.data - param_s.detach().data
             dist_tot += d.sum()
             param_tot += d.numel()
-            param_t.data.mul_(param_mo).add_((1 - param_mo) * param_s.detach().data)
+            param_t.data.mul_(training_conf.teacher_momentum).add_((1 - training_conf.teacher_momentum) * param_s.detach().data)
 
 
     epoch_loss = epoch_loss_sum / len(loader)
@@ -256,6 +282,25 @@ def init_ddp():
     torch.cuda.set_device(DEVICE)
     logger.info(f"DDP [{os.getpid()}] rank: {rank} device_id: {device_id} CUDA device {DEVICE} name: {torch.cuda.get_device_name()}")
     return device_id
+
+
+def build_training_config(conf, optimizer):
+    """
+    Build a training config class from the provided config
+    :param conf: Full config dictionary
+    :param optimizer: Optimizer to use for training
+    """
+    return TrainingConfig(
+        teacher_events=conf['training']['teacher_events'],
+        student_events=conf['training']['n_student_events'],
+        student_reps=conf['training']['n_student_reps'],
+        batch_size=conf['training']['batch_size'],
+        teacher_momentum=conf['training']['teacher_momentum'],
+        center_momentum=conf['training']['center_momentum'],
+        loss_weight_sched=LinearScheduler(conf['training']['koleo_loss_weight_start'], conf['training']['koleo_loss_weight_end'], conf['training']['koleo_loss_weight_steps']),
+        lr_sched=WarmupCosineLRScheduler(optimizer, conf['training']['max_lr'], conf['training']['min_lr'], conf['training']['warmup_iters'], conf['training']['lr_decay_iters']),
+        temperature_sched=LinearScheduler(conf['training']['temperature_start'], conf['training']['temperature_end'], conf['training']['temperature_steps']),
+    )
 
 
 def train_dino(conf, run_name):
@@ -332,7 +377,8 @@ def train_dino(conf, run_name):
             heads=conf['model']['heads'],
             d_ff=conf['model']['d_ff'],
             hidden_dim=conf['model']['hidden_dim'],
-            projection_dim=conf['model']['projection_dim']).to(DEVICE)
+            projection_dim=conf['model']['projection_dim'],
+            layer_type=conf['model']['layer_type']).to(DEVICE)
         
         teacher = TubeEncoderWithProjection(
             num_features=conf['model']['num_features'],
@@ -341,7 +387,8 @@ def train_dino(conf, run_name):
             heads=conf['model']['heads'],
             d_ff=conf['model']['d_ff'],
             hidden_dim=conf['model']['hidden_dim'],
-            projection_dim=conf['model']['projection_dim']).to(DEVICE)
+            projection_dim=conf['model']['projection_dim'],
+            layer_type=conf['model']['layer_type']).to(DEVICE)
 
         optimizer = torch.optim.AdamW(student.parameters(), lr=conf['training']['min_lr'])
 
@@ -367,7 +414,9 @@ def train_dino(conf, run_name):
     #     torch.compile(student)
     #     torch.compile(teacher)
 
-    lrschedule = WarmupCosineLRScheduler(optimizer, conf['training']['max_lr'], conf['training']['min_lr'], conf['training']['warmup_iters'], conf['training']['lr_decay_iters'])
+
+    training_conf = build_training_config(conf, optimizer)
+    # lrschedule = WarmupCosineLRScheduler(optimizer, conf['training']['max_lr'], conf['training']['min_lr'], conf['training']['warmup_iters'], conf['training']['lr_decay_iters'])
     
     model_tot_params = sum(p.numel() for p in student.parameters())
     model_trainable_params = sum(p.numel() for p in student.parameters() if p.requires_grad)
@@ -389,52 +438,39 @@ def train_dino(conf, run_name):
     
     checkpoint_freq = conf['training']['checkpoint_freq']
 
-    teacher_mo_schedule = LinearScheduler(conf['training']['teacher_momentum_start'], conf['training']['teacher_momentum_end'], conf['training']['teacher_momentum_steps'])
-
-    teacher_events_schedule = LinearScheduler(conf['training']['teacher_events_start'], conf['training']['teacher_events_end'], conf['training']['teacher_events_steps'])
-
-    koleo_schedule = LinearScheduler(conf['training']['koleo_loss_weight_start'], conf['training']['koleo_loss_weight_end'], conf['training']['koleo_loss_weight_steps'])
-
     shared_augs = None
     #shared_augs = compose([
     #    partial(standardize_range, means=feat_means, stds=feat_stds)
     #])
 
     student_augs = compose([
-        partial(scale, prob=0.5, scale=0.4),
-        partial(shift, prob=0.45, scale=0.4),
-        partial(noise, prob=0.75, scale=1.0),
+        partial(scale, prob=0.5, scale=0.2),
+        partial(shift, prob=0.45, scale=0.2),
+        partial(noise, prob=0.75, scale=0.5),
     ])
 
     #logger.info(f"Proc: {os.getpid()} device: {device_id} w: {student.module.backbone.embedding[0].weight[0, :]}")
     for epoch in range(start_epoch, start_epoch + conf['training']['epochs']):
 
         epoch_results = dino_epoch(loader, teacher, student, optimizer,
-                   teacher_events_schedule=teacher_events_schedule,
-                   n_student_events=conf['training']['n_student_events'],
-                   n_student_reps=conf['training']['n_student_reps'],
-                   center_mo=conf['training']['center_momentum'],
-                   teacher_mo_schedule=teacher_mo_schedule,
+                   training_conf,
                    teacher_center=teacher_center,
-                   lr_schedule=lrschedule,
-                   koleo_loss_schedule=koleo_schedule,
                    student_augs=student_augs,
                    shared_augs=shared_augs,
                    teacher_augs=None)
         teacher_center = epoch_results['teacher_center']
         cosine_sim = epoch_results['cosine_sim']
-        logger.info(f"Epoch #{epoch} LR: {lrschedule.get_lr()[0] :.5f} Loss: {epoch_results['epoch_loss'] :.4f}  cos. sim: {epoch_results['cosine_sim'] :.4f} self_cosim_mean: {epoch_results['self_cosim_mean'] :.4f} other_cosim_mean: {epoch_results['other_cosim_mean'] :.4f}")
+        logger.info(f"Epoch #{epoch} LR: {training_conf.lr_sched.get_lr()[0] :.5f} Loss: {epoch_results['epoch_loss'] :.4f}  cos. sim: {epoch_results['cosine_sim'] :.4f} self_cosim_mean: {epoch_results['self_cosim_mean'] :.4f} other_cosim_mean: {epoch_results['other_cosim_mean'] :.4f}")
         if experiment is not None:
             experiment.log_metric("loss", epoch_results['epoch_loss'], epoch=epoch)
             experiment.log_metric("cosine_sim", epoch_results['cosine_sim'], epoch=epoch)
-            experiment.log_metric("lr", lrschedule.get_lr()[0], epoch=epoch)
+            experiment.log_metric("lr", training_conf.lr_sched.get_lr()[0], epoch=epoch)
             experiment.log_metric("self_cosim_mean", epoch_results['self_cosim_mean'], epoch=epoch)
             experiment.log_metric("other_cosim_mean", epoch_results['other_cosim_mean'], epoch=epoch)
             experiment.log_metric("dino_loss", epoch_results['dino_loss'], epoch=epoch)
             experiment.log_metric("koleo_loss", epoch_results['koleo_loss'], epoch=epoch)
-            experiment.log_metric("teacher_mo", teacher_mo_schedule.current_value(), epoch=epoch)
-            experiment.log_metric("teacher_events_schedule", teacher_events_schedule.current_value(), epoch=epoch)
-            experiment.log_metric("koleo_loss_weight", koleo_schedule.current_value(), epoch=epoch)
+            experiment.log_metric("koleo_loss_weight", training_conf.loss_weight_sched.current_value(), epoch=epoch)
+            experiment.log_metric("teacher_temp", training_conf.temperature_sched.current_value(), epoch=epoch)
 
         if (epoch % checkpoint_freq == 0 or epoch == (conf['training']['epochs'] - 1)) and MASTER_PROCESS:
             if isinstance(student, DDP):

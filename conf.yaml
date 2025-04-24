@@ -12,6 +12,7 @@ model:
   projection_dim: 4096
   hidden_dim: 1024
   d_ff: 2048
+  layer_type: "swiglu"  # "swiglu" or "normal"
 
 
 training:
@@ -24,16 +25,15 @@ training:
   checkpoint_freq: 10
   center_momentum: 0.99
   teacher_momentum_start: 0.999
-  teacher_momentum_end: 0.999
-  teacher_momentum_steps: 5000
-
   teacher_events_start: 4096
-  teacher_events_end: 4096
-  teacher_events_steps: 50000
 
-  koleo_loss_weight_start: 0.004
-  koleo_loss_weight_end: 0.001
-  koleo_loss_weight_steps: 20000
+  koleo_loss_weight_start: 0.0
+  koleo_loss_weight_end: 0.01
+  koleo_loss_weight_steps: 2000
+
+  temperature_start: 0.05
+  temperature_end: 0.1
+  temperature_steps: 5000
 
   n_student_events: 512
   n_student_reps: 2

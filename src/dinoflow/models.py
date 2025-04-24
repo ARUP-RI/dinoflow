@@ -148,9 +148,9 @@ class ProjectionHead(nn.Module):
         return x
 
 class TubeEncoderWithProjection(nn.Module):
-    def __init__(self, num_features, model_embed_dim, layers, heads, d_ff, hidden_dim, projection_dim):
+    def __init__(self, num_features, model_embed_dim, layers, heads, d_ff, hidden_dim, projection_dim, layer_type='normal'):
         super().__init__()
-        self.tube_encoder = TubeEncoder(num_features, model_embed_dim, layers, heads, d_ff)
+        self.tube_encoder = TubeEncoder(num_features, model_embed_dim, layers, heads, d_ff, layer_type)
         self.projection_head = ProjectionHead(model_embed_dim, hidden_dim, projection_dim)
 
     def forward(self, x):

@@ -13,7 +13,7 @@ from dinoflow import util
 
 
 class BinaryClassificationModel(pl.LightningModule):
-    def __init__(self, model, min_lr=0.00001, max_lr=0.0001, warmup_iters=50, lr_decay_iters=250, emit_predictions=False, ckpt_params=None, num_classes=1):
+    def __init__(self, model, min_lr=0.00001, max_lr=0.00025, warmup_iters=10, lr_decay_iters=80, emit_predictions=False, ckpt_params=None, num_classes=1):
         super().__init__()
         assert num_classes==1, "Only one class permitted for binary"
         self.model = model #

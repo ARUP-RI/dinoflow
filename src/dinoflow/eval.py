@@ -167,7 +167,18 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
 @app.command()
 def train(run_name, train_labels, test_labels, 
           backbone: str, 
-          conf: str, tube_type: str = "", dataroot: str = "/", positive_repeat_factor: int = 1, labelkey: str = "label", checkpoint: str = None, freeze_backbone: bool = False, batch_size: int=16, events: int = 4096, epochs: int = 25, mode: str = 'binary', num_classes: int = 2) :
+          conf: str, 
+          tube_type: str = "", 
+          dataroot: str = "/", 
+          positive_repeat_factor: int = 1, 
+          labelkey: str = "label", 
+          checkpoint: str = None, 
+          freeze_backbone: bool = False, 
+          batch_size: int=16, 
+          events: int = 4096, 
+          epochs: int = 25, 
+          mode: str = 'binary', 
+          num_classes: int = 2) :
     """
     Evaluate the model on the test set
     """
@@ -227,6 +238,7 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
                 events: int = 4096,
                 batch_size: int = 16,
                 epochs: int = 50,
+                freeze_backbone_layers: int = 0,
                 max_lr: float = 0.0001,
                 mode:str = 'binary',
                 positive_repeat_factor: int = 1,
@@ -238,17 +250,6 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
     t_backbone, _ = load_checkpoint(t_ckpt)
     m_backbone, _ = load_checkpoint(m_ckpt)
 
-
-    logger.info("Freezing backbones")
-    b_backbone.eval()
-    t_backbone.eval()
-    m_backbone.eval()
-    for p in b_backbone.parameters():
-        p.requires_grad = False
-    for p in t_backbone.parameters():
-        p.requires_grad = False
-    for p in m_backbone.parameters():
-        p.requires_grad = False
 
     output_classes = 1 if mode == 'binary' or mode == 'regression' else num_classes
     
@@ -263,7 +264,21 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
     btm.b_backbone = b_backbone
     btm.t_backbone = t_backbone
     btm.m_backbone = m_backbone
-    
+
+    if freeze_backbone_layers > 0:
+        logger.info(f"Freezing backbone layers: {freeze_backbone_layers}")
+        for i in range(freeze_backbone_layers):
+            btm.b_backbone.encoder.layers[i].eval()
+            for p in btm.b_backbone.encoder.layers[i].parameters():
+                p.requires_grad = False
+            btm.t_backbone.encoder.layers[i].eval()
+            for p in btm.t_backbone.encoder.layers[i].parameters():
+                p.requires_grad = False
+            btm.m_backbone.encoder.layers[i].eval()
+            for p in btm.m_backbone.encoder.layers[i].parameters():
+                p.requires_grad = False
+
+
     if mode == 'binary':
         model = BinaryClassificationModel(btm, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr)
     elif mode == 'multiclass':

@@ -17,11 +17,12 @@ python src/dinoflow/eval.py train3tubes \
     /home/22319/data/brendan/dinoflow/casedx_2024-08-21_noreport_train_with_m_projections.csv \
     /home/22319/data/brendan/dinoflow/casedx_2024-08-21_noreport_test_with_m_projections.csv \
     $1 \
-    --labelkey 'BALL' \
-    --positive-repeat-factor 3 \
+    --labelkey 'CLL' \
+    --positive-repeat-factor 1 \
     --dataroot /data2/brendan/flow/ \
-    --events 8192 \
-    --max-lr 0.0005 \
-    --batch-size 256 \
-    --epochs 30
+    --freeze-backbone-layers 6 \
+    --events 4096 \
+    --max-lr 0.00025 \
+    --batch-size 32 \
+    --epochs 50
 

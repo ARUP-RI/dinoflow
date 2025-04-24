@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-export CUDA_VISIBLE_DEVICES=4,5,6,7
+export CUDA_VISIBLE_DEVICES=2,3
 
 
 export OMP_NUM_THREADS=8
@@ -10,8 +10,7 @@ export TORCH_NCCL_TRACE_BUFFER_SIZE=1 # This is for debugging NCCL issues
 
 # Implements DinoFlow to train single tube model
 
-torchrun --standalone --nnodes=1 --nproc-per-node=4  src/dinoflow/dino.py \
+torchrun --standalone --nnodes=1 --nproc-per-node=2  src/dinoflow/dino.py \
     $1 \
-    --tube-type m \
-    --checkpoint /home/22319/src/dinoflow/m_p4k_cont_lessaug/m_p4k_cont_lessaug_epoch80.pt \
+    --tube-type b \
     --run-name $2 \
