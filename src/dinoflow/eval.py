@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader, Dataset
 import numpy as np
 
 
-from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint, BTMTubes, load_btm_from_checkpoint
+from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint, BTMTubes, load_btm_from_checkpoint, IlseBagModel, munge_state_dict
 from dinoflow.data import TubeData, collate_fn, compose, shift, scale, noise, standardize_range, CSVDataset
 from dinoflow import util
 from dinoflow.plmodels import BinaryClassificationModel, ClassificationModel, RegressionModel
@@ -33,9 +33,51 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s]   %(levelname)s   
 logger = logging.getLogger(__name__)
 
 
+def load_pl_checkpoint(path, device=None):
+    ckpt = torch.load(path, weights_only=False, map_location='cpu')
+    backbone_class = ckpt['hyper_parameters']['backbone_class']
+    model_conf = ckpt['hyper_parameters']['model_conf']
+    num_classes = model_conf.get('num_classes', 1)
+    state_dict = munge_state_dict(ckpt['state_dict'])
+    if backbone_class == "IlseBagModel":
+        model = IlseBagModel(
+            num_features=model_conf['num_features'],
+            model_embed_dim=model_conf['model_embed_dim'],
+            output_classes=model_conf['output_classes'],
+            proto_dim=model_conf['proto_dim'],
+            bag_classes=model_conf['bag_classes']
+        )
+    elif backbone_class == "CombinedModel":
+        backbone = TubeEncoder(
+            num_features=model_conf['num_features'],
+            model_embed_dim=model_conf['model_embed_dim'],
+            layers=model_conf['layers'],
+            heads=model_conf['heads'],
+            d_ff=model_conf['d_ff'],
+            layertype=model_conf['layertype'],
+        )
+        classifier = ClassificationHead(model_conf['model_embed_dim'], num_classes, model_conf['output_scale_factor'])
+        model = CombinedModel(backbone, classifier)
+    else:
+        raise NotImplementedError(f"Backbone class {backbone_class} not implemented")
+    
+    model.load_state_dict(state_dict, strict=True)
+    pl_model = ckpt['hyper_parameters']['model_class']
+    if pl_model == "BinaryClassificationModel":
+        model = BinaryClassificationModel(model, emit_predictions=False)
+    elif pl_model == "ClassificationModel":
+        model = ClassificationModel(model, num_classes=model_conf['num_classes'], emit_predictions=False)
+    elif pl_model == "RegressionModel":
+        model = RegressionModel(model, emit_predictions=False)
+    else:
+        raise NotImplementedError(f"PL model {pl_model} not implemented")
+    
+    return model
+
 class ClassificationHead(nn.Module):
-    def __init__(self, num_features, num_classes):
+    def __init__(self, num_features, num_classes, output_scale_factor=1.0):
         super().__init__()
+        self.output_scale_factor = output_scale_factor
         self.layers = nn.Sequential(
             nn.Linear(num_features, num_features),
             nn.GELU(),
@@ -46,12 +88,15 @@ class ClassificationHead(nn.Module):
         layer_dtype = self.layers[0].weight.dtype
         if x.dtype != layer_dtype:
             x = x.to(layer_dtype)
-        return self.layers(x)
+        return self.layers(x) * self.output_scale_factor
     
 
 class CombinedModel(nn.Module):
     def __init__(self, backbone, classifier):
         super().__init__()
+        self.model_conf = backbone.model_conf
+        if hasattr(classifier, 'output_scale_factor'):
+            self.model_conf['output_scale_factor'] = classifier.output_scale_factor
         self.backbone = backbone
         self.classifier = classifier
     
@@ -178,7 +223,7 @@ def train(run_name, train_labels, test_labels,
           events: int = 4096, 
           epochs: int = 25, 
           mode: str = 'binary', 
-          num_classes: int = 2) :
+          num_classes: int = 1) :
     """
     Evaluate the model on the test set
     """
@@ -188,7 +233,9 @@ def train(run_name, train_labels, test_labels,
 
     logger.info(f"Loading backbone from {backbone}")
     backbone, modelconf = load_checkpoint(backbone)
-    classifier = ClassificationHead(backbone.cls_token.shape[-1], 1 if mode == 'binary' or mode == 'regression' else num_classes)
+    classifier = ClassificationHead(backbone.cls_token.shape[-1], 
+                                    num_classes=1 if mode == 'binary' or mode == 'regression' else num_classes,
+                                    output_scale_factor=1.0 if mode == 'regression' else 1.0)
     combined = CombinedModel(backbone, classifier)
 
     if mode == 'binary':
@@ -252,14 +299,16 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
 
 
     output_classes = 1 if mode == 'binary' or mode == 'regression' else num_classes
-    
+    output_scale_factor = 2.0 if mode == 'regression' else 1.0
+
     modelconf['output_classes'] = output_classes # Add it here so it can be saved in the checkpoint
 
     btm = BTMTubes(num_features=13,
                     model_embed_dim=modelconf['model_dim'],
                     backbone_heads=modelconf['heads'],
                     backbone_layers=modelconf['layers'],
-                    output_classes=output_classes)
+                    output_classes=output_classes,
+                    output_scale_factor=output_scale_factor,)
 
     btm.b_backbone = b_backbone
     btm.t_backbone = t_backbone
@@ -398,7 +447,9 @@ def trainsomclassifier(train_csv: str,
         logger.info(f"Adjusting model_dim to: {model_dim}")
 
 
-    clfhead = ClassificationHead(model_dim, 1 if mode == 'binary' or mode == 'regression' else num_classes)
+    clfhead = ClassificationHead(model_dim, 
+                                 num_classes=1 if mode == 'binary' or mode == 'regression' else num_classes,
+                                 output_scale_factor=0.25 if mode == 'regression' else 1.0)
 
     traindata = CSVDataset(rootdir=dataroot, csvpath=train_csv, label_key=label_key, path_key=path_key, label_transforms=label_transform, transforms=flat_and_concat)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=workers)
@@ -546,6 +597,60 @@ def train_abmil3tube(train_csv: str,
 
     _run_trainer(model, train_csv, test_csv, ["b", "t", "m"], run_name, label_key, dataroot, events, batch_size, epochs, positive_repeat_factor)
    
+@app.command()
+@torch.inference_mode()
+def predict_onetube(checkpoint: str,
+                    test_labels: str,
+                    tube_type: str,
+                    labelkey: str, 
+                    dataroot: str = ".", 
+                    events: int = 4096, 
+                    batch_size: int = 16):
+    """
+    Predict the labels for the test set
+    """
+    # In the future we'll be able to load the modelconf from the checkpoint but older models dont save it
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # model = load_pl_checkpoint(checkpoint, device=device)
+    ckpt = torch.load(checkpoint, weights_only=False, map_location='cpu')
+    model_conf = ckpt['hyper_parameters']['model_conf']
+    num_classes = 1
+    backbone = TubeEncoder(
+            num_features=model_conf['num_features'],
+            model_embed_dim=model_conf['model_embed_dim'],
+            layers=model_conf['layers'],
+            heads=model_conf['heads'],
+            d_ff=model_conf['d_ff'],
+            layertype=model_conf['layertype'],
+    )
+    classifier = ClassificationHead(model_conf['model_embed_dim'], num_classes, model_conf['output_scale_factor'])
+    model = CombinedModel(backbone, classifier)
+    state_dict = munge_state_dict(ckpt['state_dict'])
+    model.load_state_dict(state_dict, strict=True)
+    model.eval().to(device)
+    
+    testdata = TubeData(test_labels, data_root=dataroot, labelkey=labelkey, tubes_to_return=[tube_type], events_to_return=int(events))
+    testloader = DataLoader(testdata, batch_size=batch_size, shuffle=False, num_workers=4)
+    logger.info(f"Loaded {len(testloader.dataset)} samples for test")
+
+    for b, (batch, rowdict) in enumerate(testloader):
+        labels = rowdict['label']
+        i = 0
+        preds = model(batch.to(device)).cpu()
+        num_classes = len(preds.shape) - 1
+        if num_classes == 1:
+            preds = F.sigmoid(preds) * 100.0
+        else:
+            preds = F.softmax(preds, dim=1)
+        for p, l in zip(preds, labels):
+            idx = b * batch_size + i
+            if num_classes == 1:
+                p = f"{p.item() :.4f}"
+            else:
+                p = p.argmax(dim=0).item()
+            print(f"{idx},{rowdict['ACCESSION'][i]},{p},{labels[i]}")
+            i += 1
+
 
 @app.command()
 def predict(checkpoint: str,

@@ -56,10 +56,11 @@ def load_btm_from_checkpoint(checkpoint: str, device=None):
 
 def load_checkpoint(path, device=None):
     """
-    Load a checkpoint from a file and return the tube encoder from the teacher
+    Load a **backbone training** checkpoint from a file and return the tube encoder from the teacher
     """
     ckpt = torch.load(path, weights_only=False, map_location=device)
-    modelconf = ckpt['modelconf']    
+    modelconf = ckpt['modelconf']
+    logger.info(f"Loading model with config: {modelconf}")    
     teacher = TubeEncoderWithProjection(
             num_features=modelconf['num_features'], 
             model_embed_dim=modelconf['model_dim'], 
@@ -67,10 +68,12 @@ def load_checkpoint(path, device=None):
             d_ff=modelconf.get('d_ff', 2048),
             heads=modelconf['heads'], 
             hidden_dim=modelconf['hidden_dim'], 
-            projection_dim=modelconf['projection_dim']).to(device)
+            projection_dim=modelconf['projection_dim'],
+            layer_type=modelconf.get("layer_type", "normal")).to(device)
 
     teacher.load_state_dict(ckpt['teacher'])
     return teacher.tube_encoder, modelconf
+
 
 
 class SwishGLUTransformerEncoderLayer(nn.TransformerEncoderLayer):
@@ -101,6 +104,14 @@ class TubeEncoder(nn.Module):
     
     def __init__(self, num_features, model_embed_dim, layers, heads, d_ff=2048, layertype='normal'):
         super().__init__()
+        self.model_conf = {
+            'num_features': num_features,
+            'model_embed_dim': model_embed_dim,
+            'layers': layers,
+            'heads': heads,
+            'd_ff': d_ff,
+            'layertype': layertype
+        }
         self.model_dim = model_embed_dim
         self.num_features = num_features
         self.layers = layers
@@ -186,8 +197,19 @@ class BTMTubes(nn.Module):
     """
     Combines the B, T, and M backbones and generates a final prediction
     """
-    def __init__(self, num_features, model_embed_dim, backbone_heads, backbone_layers, output_classes, d_ff=2048, include_classifier=True, layer_type='normal'):
+    def __init__(self, num_features, model_embed_dim, backbone_heads, backbone_layers, output_classes, d_ff=2048, include_classifier=True, layer_type='normal', output_scale_factor=1.0):
         super().__init__()
+        self.model_conf = {
+            'num_features': num_features,
+            'model_embed_dim': model_embed_dim,
+            'backbone_heads': backbone_heads,
+            'backbone_layers': backbone_layers,
+            'output_classes': output_classes,
+            'd_ff': d_ff,
+            'layer_type': layer_type,
+            'output_scale_factor': output_scale_factor
+        }
+        self.output_scale_factor = output_scale_factor
         self.b_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff, layer_type)
         self.t_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff, layer_type)
         self.m_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff, layer_type)
@@ -204,7 +226,6 @@ class BTMTubes(nn.Module):
                 nn.Linear(model_embed_dim, output_classes),
             )
 
-
     def forward(self, eventdict):
         b_events = eventdict['b'].float()
         t_events = eventdict['t'].float()
@@ -217,7 +238,7 @@ class BTMTubes(nn.Module):
             b_out = self.b_mlp(b_out)
             t_out = self.t_mlp(t_out)
             m_out = self.m_mlp(m_out)
-            x = self.combined(torch.cat((b_out, t_out, m_out), dim=1))
+            x = self.combined(torch.cat((b_out, t_out, m_out), dim=1)) * self.output_scale_factor
         else:
             x = torch.cat((b_out, t_out, m_out), dim=1) 
         return x
@@ -271,6 +292,13 @@ class IlseBagModel(nn.Module):
 
     def __init__(self, num_features, model_embed_dim, output_classes=1, proto_dim=256, bag_classes=1):
         super().__init__()
+        self.model_conf = {
+            'num_features': num_features,
+            'model_embed_dim': model_embed_dim,
+            'output_classes': output_classes,
+            'proto_dim': proto_dim,
+            'bag_classes': bag_classes
+        }
         self.instance_encoder = MLP(num_features, model_embed_dim, model_embed_dim, n_layers=2, residual=False)
         self.mil_attn = IlseBagEncoder(model_embed_dim, proto_dim, bag_classes)
         self.output_head = MLP(model_embed_dim * bag_classes, 128, output_classes, n_layers=2, residual=False)
@@ -287,6 +315,13 @@ class Ilse3TubeModel(nn.Module):
     def __init__(self, num_features, model_embed_dim, output_classes=1, proto_dim=256, bag_classes=1):
         super().__init__()
         self.bag_output_dim = 128
+        self.model_conf = {
+            'num_features': num_features,
+            'model_embed_dim': model_embed_dim,
+            'output_classes': output_classes,
+            'proto_dim': proto_dim,
+            'bag_classes': bag_classes
+        }
         self.m_model = IlseBagModel(num_features, model_embed_dim, self.bag_output_dim, proto_dim=proto_dim, bag_classes=bag_classes)
         self.b_model = IlseBagModel(num_features, model_embed_dim, self.bag_output_dim, proto_dim=proto_dim, bag_classes=bag_classes)
         self.t_model = IlseBagModel(num_features, model_embed_dim, self.bag_output_dim, proto_dim=proto_dim, bag_classes=bag_classes)
