@@ -60,9 +60,13 @@ class BinaryClassificationModel(pl.LightningModule):
         x, rowinfo = batch
         labels = rowinfo['label']
         accs = rowinfo['ACCESSION']
-        preds = self(x).squeeze(-1)
-        loss = torch.nn.functional.binary_cross_entropy_with_logits(preds, labels.float())
-        preds = torch.nn.Sigmoid()(preds) # raw outputs are logits, non-sigmoid
+        
+        
+        backbone_reps = self.model.backbone(x.float())
+        logits = self.model.classifier(backbone_reps).squeeze(1)
+        preds = torch.sigmoid(logits)
+        
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(logits, labels.float())
         
         # Store predictions and labels for later use
         self.val_preds.append(preds.detach().float())
@@ -96,7 +100,8 @@ class BinaryClassificationModel(pl.LightningModule):
             # For single process
             gathered_preds = torch.cat(self.val_preds).float()
             gathered_labels = torch.cat(self.val_labels).int()
- 
+
+
         # These get set in the main process, but for logging we are required to do that in every process, so set
         # some defaults here for every process ...
         best_f1 = float("NaN")
@@ -156,12 +161,6 @@ class BinaryClassificationModel(pl.LightningModule):
         self.log('fscore', best_f1)
         self.log('threshold', threshold)
         self.log('precision', best_precision)
-        
-        # Write the prediction and labels to a file
-        # if self.trainer.is_global_zero:
-        #     with open(f"predictions_ep{self.current_epoch}.txt", "w") as f:
-        #         for p, l in zip(gathered_preds.cpu().numpy(), gathered_labels.cpu().numpy()):
-        #             f.write(f"{p:.4f}\t{l:.2f}\n")
 
         # Log the Area Under Precision-Recall Curve (AUPRC)
         # This is the same as average precision score

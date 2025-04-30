@@ -75,6 +75,10 @@ def load_checkpoint(path, device=None):
     return teacher.tube_encoder, modelconf
 
 
+def custom_activation(x):
+    """ Dummy activation function that won't be used """
+    return x
+
 
 class SwishGLUTransformerEncoderLayer(nn.TransformerEncoderLayer):
     def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.0, 
@@ -84,7 +88,7 @@ class SwishGLUTransformerEncoderLayer(nn.TransformerEncoderLayer):
                          dim_feedforward=dim_feedforward,
                          dropout=dropout, layer_norm_eps=layer_norm_eps,
                          batch_first=batch_first,
-                         activation='relu')  # This won't matter
+                         activation=custom_activation) # Danger: Putting 'relu' or 'gelu' here will cause the _ff_block to be ignored!!
         
         # Replace the feed-forward network with SwishGLU
         self.linear1 = nn.Linear(d_model, dim_feedforward)
@@ -97,7 +101,7 @@ class SwishGLUTransformerEncoderLayer(nn.TransformerEncoderLayer):
         gate = self.linear_gate(x)
         swish = main_path * torch.sigmoid(self.beta * main_path)
         x = swish * gate
-        return self.dropout(self.linear2(x))
+        return self.linear2(x)
 
 
 class TubeEncoder(nn.Module):
@@ -117,6 +121,7 @@ class TubeEncoder(nn.Module):
         self.layers = layers
         self.heads = heads
         self.d_ff = d_ff
+        assert layertype in ['normal', 'swiglu'], "Invalid layer type"
         self.fc = nn.Linear(num_features, model_embed_dim)
         if layertype == 'normal':
             encoderlayer = nn.TransformerEncoderLayer(d_model=model_embed_dim,
