@@ -62,11 +62,12 @@ class BinaryClassificationModel(pl.LightningModule):
         accs = rowinfo['ACCESSION']
         
         
-        backbone_reps = self.model.backbone(x.float())
-        logits = self.model.classifier(backbone_reps).squeeze(1)
-        preds = torch.sigmoid(logits)
+        # backbone_reps = self.model.backbone(x.float())
+        # logits = self.model.classifier(backbone_reps).squeeze(1)
+        logits = self(x)
+        preds = torch.sigmoid(logits.squeeze(1))
         
-        loss = torch.nn.functional.binary_cross_entropy_with_logits(logits, labels.float())
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(logits.squeeze(1), labels.float())
         
         # Store predictions and labels for later use
         self.val_preds.append(preds.detach().float())

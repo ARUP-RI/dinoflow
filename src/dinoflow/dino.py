@@ -443,10 +443,11 @@ def train_dino(conf, run_name):
     #    partial(standardize_range, means=feat_means, stds=feat_stds)
     #])
 
+    transforms_conf = conf['training']['transforms']
     student_augs = compose([
-        partial(scale, prob=0.5, scale=0.2),
-        partial(shift, prob=0.45, scale=0.2),
-        partial(noise, prob=0.75, scale=0.5),
+        partial(scale, prob=transforms_conf['scale_prob'], scale=transforms_conf['scale_range']),
+        partial(shift, prob=transforms_conf['shift_prob'], scale=transforms_conf['shift_range']),
+        partial(noise, prob=transforms_conf['noise_prob'], scale=transforms_conf['noise_range']),
     ])
 
     #logger.info(f"Proc: {os.getpid()} device: {device_id} w: {student.module.backbone.embedding[0].weight[0, :]}")

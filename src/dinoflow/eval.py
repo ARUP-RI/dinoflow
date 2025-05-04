@@ -54,10 +54,63 @@ class TrainingConfig:
     lr_warmup_iters: int = 100
 
 
+
+def load_model_from_pl_checkpoint(checkpoint: str, device=None):
+    """
+    Load a model from a checkpoint saved by a pytorch-lightning trainer
+    """
+    ckpt = torch.load(checkpoint, weights_only=False)
+    model_conf = ckpt['hyper_parameters']['model_conf']
+    if model_conf.get('backbone_class') == 'CombinedModel':
+        backbone = TubeEncoder(
+            num_features=model_conf['num_features'],
+            model_embed_dim=model_conf['model_embed_dim'],
+            layers=model_conf['layers'],
+            heads=model_conf['heads'],
+            d_ff=model_conf['d_ff'],
+            layertype=model_conf['layertype'],
+        )
+        classifier = ClassificationHead(model_conf['model_embed_dim'], 
+                                  num_classes=1, 
+                                  output_scale_factor=model_conf.get('output_scale_factor', 1.0))
+        model = CombinedModel(backbone, classifier, freeze_backbone=True)
+    elif model_conf.get('backbone_class') == 'IlseBagModel':
+        model = IlseBagModel(
+            num_features=model_conf['num_features'],
+            model_embed_dim=model_conf['model_embed_dim'],
+            output_classes=model_conf['output_classes'],
+            proto_dim=model_conf['proto_dim'],
+            bag_classes=model_conf['bag_classes'],
+        )
+    elif model_conf.get('backbone_class') == 'DeepCyTof':
+        from dinoflow.cnnmodel import DeepCyTof
+        model = DeepCyTof(
+            input_channels=model_conf['input_channels'],
+            num_features=model_conf['num_features'],
+            pool_height=model_conf['pool_height'],
+        )
+    elif model_conf.get('backbone_class') == 'ClassificationHead':
+        model = ClassificationHead(
+            num_features=model_conf['num_features'],
+            num_classes=model_conf['num_classes'],
+            output_scale_factor=model_conf['output_scale_factor'],
+        )
+    else:
+        raise ValueError(f"Unknown backbone class: {model_conf.get('backbone_class')}")
+    
+    model.load_state_dict(munge_state_dict(ckpt['state_dict']), strict=True)
+    model.eval()
+    return model
+
 class ClassificationHead(nn.Module):
     def __init__(self, num_features, num_classes, output_scale_factor=1.0):
         super().__init__()
         self.output_scale_factor = output_scale_factor
+        self.model_conf = {
+            'num_features': num_features,
+            'num_classes': num_classes,
+            'output_scale_factor': output_scale_factor,
+        }
         self.layers = nn.Sequential(
             nn.Linear(num_features, num_features),
             nn.GELU(),
@@ -96,26 +149,6 @@ class CombinedModel(nn.Module):
     #     elif mode:
     #         self.backbone.train()
 
-
-
-
-class TestWrapper(nn.Module):
-    def __init__(self, backbone, classifier, freeze_backbone=False):
-        super().__init__()
-        self.backbone = backbone
-        self.classifier = classifier
-        self.freeze_backbone = freeze_backbone
-        if freeze_backbone:
-            self.backbone.eval()
-            for p in self.backbone.parameters():
-                p.requires_grad = False
-    
-    def forward(self, x):
-        return self.classifier(self.backbone(x.float()))
-    
-    def compute_backbone_output(self, x):
-        return self.backbone(x.float())
-    
 
 class SOMCombinedModel(nn.Module):
     def __init__(self, som, classifier):
@@ -462,7 +495,7 @@ def trainsomclassifier(train_csv: str,
 
     clfhead = ClassificationHead(model_dim, 
                                  num_classes=1 if mode == 'binary' or mode == 'regression' else num_classes,
-                                 output_scale_factor=0.25 if mode == 'regression' else 1.0)
+                                 output_scale_factor=0.02 if mode == 'regression' else 1.0)
 
     traindata = CSVDataset(rootdir=dataroot, csvpath=train_csv, label_key=label_key, path_key=path_key, label_transforms=label_transform, transforms=flat_and_concat)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=workers)
@@ -529,7 +562,7 @@ def train_deepcytof(train_csv: str,
         tube_type = tube_type.split(",")
 
     assert mode in ('binary', 'multiclass', 'regression'), f"Unknown mode: {mode}"
-    model = DeepCyTof(num_features=13, pool_height=events)
+    model = DeepCyTof(num_features=13, pool_height=events, output_scale_factor=10.0 if mode == 'regression' else 1.0)
     model = model.to(DEVICE)
 
     if mode == 'binary':
@@ -537,7 +570,7 @@ def train_deepcytof(train_csv: str,
     elif mode == 'multiclass':
         model = ClassificationModel(model, num_classes=num_classes, emit_predictions=False, max_lr=max_lr)
     elif mode == 'regression':
-        model = RegressionModel(model, emit_predictions=False, max_lr=max_lr)
+        model = RegressionModel(model, emit_predictions=True, max_lr=max_lr)
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
@@ -627,24 +660,25 @@ def predict_onetube(checkpoint: str,
     
     # Load the lightning model, then find the model conf that defines the backbone
     ckpt = torch.load(checkpoint, weights_only=False, map_location='cpu')
-    model_conf = ckpt['hyper_parameters']['model_conf'] # Backbone params
+    default_model_conf = {
+        "num_features": 13,
+        "model_embed_dim": 256,
+        "layers": 6,
+        "heads": 4,
+        "projection_dim": 4096,
+        "hidden_dim": 1024,
+        "d_ff": 1024,
+        "layertype": "swiglu"
+    }
+    if 'model_conf' in ckpt['hyper_parameters']:
+        logger.info("Found model_conf in checkpoint, using it")
+        model_conf = ckpt['hyper_parameters']['model_conf'] # Backbone params
+    else:
+        logger.warning("No model_conf found in checkpoint, using default (small, swiglu)")
+        model_conf = default_model_conf
     
-    # Reconstruct the same model structure used in training
-    backbone = TubeEncoder(
-        num_features=model_conf['num_features'],
-        model_embed_dim=model_conf['model_embed_dim'],
-        layers=model_conf['layers'],
-        heads=model_conf['heads'],
-        d_ff=model_conf['d_ff'],
-        layertype=model_conf['layertype'],
-    )
-    classifier = ClassificationHead(model_conf['model_embed_dim'], 
-                                  num_classes=1, 
-                                  output_scale_factor=model_conf.get('output_scale_factor', 1.0))
-    model = CombinedModel(backbone, classifier, freeze_backbone=True)
     
-    model.load_state_dict(munge_state_dict(ckpt['state_dict']), strict=True)
-    model.eval()
+
     model.to(device)
     
     testdata = TubeData(test_labels, data_root=dataroot, labelkey=labelkey, 

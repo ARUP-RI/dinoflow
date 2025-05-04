@@ -1,6 +1,6 @@
 
 data:
-  data_dir: /data2/brendan/flow/converted_flowtubes
+  data_dir: /data2/brendan/flow/pretrain_flowtubes
   input_events: 8192
 
 
@@ -16,7 +16,7 @@ model:
 
 
 training:
-  batch_size: 256
+  batch_size: 128
   min_lr: 0.0000001
   max_lr: 0.00005
   warmup_iters: 5000
@@ -24,8 +24,8 @@ training:
   epochs: 100
   checkpoint_freq: 10
   center_momentum: 0.99
-  teacher_momentum_start: 0.999
-  teacher_events_start: 4096
+  teacher_momentum: 0.999
+  teacher_events: 4096
 
   koleo_loss_weight_start: 0.0
   koleo_loss_weight_end: 0.01
