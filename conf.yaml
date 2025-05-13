@@ -38,6 +38,14 @@ training:
   n_student_events: 512
   n_student_reps: 2
 
+  transforms:
+    scale_prob: 0.5
+    scale_range: 0.2
+    shift_prob: 0.5
+    shift_range: 0.2
+    noise_prob: 0.75
+    noise_range: 0.3
+
 
 
 

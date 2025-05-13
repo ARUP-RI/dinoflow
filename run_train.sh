@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-export CUDA_VISIBLE_DEVICES=2,3
+export CUDA_VISIBLE_DEVICES=0,1
 
 
 export OMP_NUM_THREADS=8
@@ -12,5 +12,5 @@ export TORCH_NCCL_TRACE_BUFFER_SIZE=1 # This is for debugging NCCL issues
 
 torchrun --standalone --nnodes=1 --nproc-per-node=2  src/dinoflow/dino.py \
     $1 \
-    --tube-type m \
+    --tube-type b \
     --run-name $2 \

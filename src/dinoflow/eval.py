@@ -214,7 +214,9 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=4)    
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
 
-    valdata = TubeData(test_labels, tubes_to_return=tubes, events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=val_transforms)
+    val_events = 2 * int(events)
+    logger.info(f"Train events: {int(events)}, val events: {val_events}")
+    valdata = TubeData(test_labels, tubes_to_return=tubes, events_to_return=val_events, data_root=dataroot, labelkey=labelkey, transforms=val_transforms)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=4)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
     
@@ -263,6 +265,7 @@ def train(run_name, train_labels, test_labels,
           labelkey: str = "label", 
           checkpoint: str = None, 
           freeze_backbone: bool = False, 
+          freeze_backbone_layers: int = 0,
           batch_size: int=16, 
           events: int = 4096, 
           epochs: int = 25, 
@@ -310,11 +313,20 @@ def train(run_name, train_labels, test_labels,
         elif mode == 'regression':
             model = RegressionModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier)
     
+    if freeze_backbone_layers > 0 and not freeze_backbone:
+        raise ValueError("freeze_backbone_layers > 0 requires freeze_backbone to be True")
     if freeze_backbone:
-        logger.info("Freezing backbone")
-        combined.backbone.eval() # freeze backbone
-        for p in combined.backbone.parameters():
-            p.requires_grad = False
+        if freeze_backbone_layers > 0:
+            for i in range(freeze_backbone_layers):
+                logger.info(f"Freezing backbone layer {i}")
+                combined.backbone.encoder.layers[i].eval()
+                for p in combined.backbone.encoder.layers[i].parameters():
+                    p.requires_grad = False
+        else:
+            logger.info("Freezing full backbone")
+            combined.backbone.eval() # freeze backbone
+            for p in combined.backbone.parameters():
+                p.requires_grad = False
     else:
         logger.info("Unfreezing backbone")
         backbone.train()
@@ -562,7 +574,7 @@ def train_deepcytof(train_csv: str,
         tube_type = tube_type.split(",")
 
     assert mode in ('binary', 'multiclass', 'regression'), f"Unknown mode: {mode}"
-    model = DeepCyTof(num_features=13, pool_height=events, output_scale_factor=10.0 if mode == 'regression' else 1.0)
+    model = DeepCyTof(num_features=13, pool_height=events, output_scale_factor=0.5 if mode == 'regression' else 1.0)
     model = model.to(DEVICE)
 
     if mode == 'binary':
@@ -743,6 +755,17 @@ def predict(checkpoint: str,
                     p = p.argmax(dim=0).item()
                 print(f"{idx},{rowdict['ACCESSION'][i]},{p},{labels[i]}")
                 i += 1
+
+#def compute_embeddings(checkpoint: str,
+#                       samplecsv: str,
+#                       dataroot: str = ".",
+#                       events: int = 4096,
+#                       batch_size: int = 16):
+#    """
+#    Compute the embeddings for the test set
+#    """
+#
+#    model, modelconf = load_model_from_pl_checkpoint
 
 if __name__ == "__main__":
     app()
