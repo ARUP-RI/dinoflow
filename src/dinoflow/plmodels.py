@@ -13,7 +13,7 @@ from dinoflow import util
 
 
 class BinaryClassificationModel(pl.LightningModule):
-    def __init__(self, model, min_lr=0.00001, max_lr=0.0001, warmup_iters=50, lr_decay_iters=250, emit_predictions=False, ckpt_params=None, num_classes=1):
+    def __init__(self, model, min_lr=0.00001, max_lr=0.00025, warmup_iters=10, lr_decay_iters=80, emit_predictions=False, ckpt_params=None, num_classes=1):
         super().__init__()
         assert num_classes==1, "Only one class permitted for binary"
         self.model = model #
@@ -28,6 +28,11 @@ class BinaryClassificationModel(pl.LightningModule):
         if ckpt_params is None:
             ckpt_params = {}
         ckpt_params['model_class'] = self.__class__.__name__
+        ckpt_params['backbone_class'] = model.__class__.__name__
+        if hasattr(model, 'model_conf'):
+            ckpt_params['model_conf'] = model.model_conf
+        else:
+            ckpt_params['model_conf'] = {}
         if ckpt_params is not None:
             self.save_hyperparameters(ckpt_params)
         
@@ -55,9 +60,14 @@ class BinaryClassificationModel(pl.LightningModule):
         x, rowinfo = batch
         labels = rowinfo['label']
         accs = rowinfo['ACCESSION']
-        preds = self(x).squeeze(-1)
-        loss = torch.nn.functional.binary_cross_entropy_with_logits(preds, labels.float())
-        preds = torch.nn.Sigmoid()(preds) # raw outputs are logits, non-sigmoid
+        
+        
+        # backbone_reps = self.model.backbone(x.float())
+        # logits = self.model.classifier(backbone_reps).squeeze(1)
+        logits = self(x)
+        preds = torch.sigmoid(logits.squeeze(1))
+        
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(logits.squeeze(1), labels.float())
         
         # Store predictions and labels for later use
         self.val_preds.append(preds.detach().float())
@@ -91,7 +101,8 @@ class BinaryClassificationModel(pl.LightningModule):
             # For single process
             gathered_preds = torch.cat(self.val_preds).float()
             gathered_labels = torch.cat(self.val_labels).int()
- 
+
+
         # These get set in the main process, but for logging we are required to do that in every process, so set
         # some defaults here for every process ...
         best_f1 = float("NaN")
@@ -151,7 +162,7 @@ class BinaryClassificationModel(pl.LightningModule):
         self.log('fscore', best_f1)
         self.log('threshold', threshold)
         self.log('precision', best_precision)
-        
+
         # Log the Area Under Precision-Recall Curve (AUPRC)
         # This is the same as average precision score
         if self.trainer.is_global_zero and isinstance(self.logger, CometLogger):
@@ -208,6 +219,11 @@ class ClassificationModel(pl.LightningModule):
         if ckpt_params is None:
             ckpt_params = {}
         ckpt_params['model_class'] = self.__class__.__name__
+        ckpt_params['backbone_class'] = model.__class__.__name__
+        if hasattr(model, 'model_conf'):
+            ckpt_params['model_conf'] = model.model_conf
+        else:
+            ckpt_params['model_conf'] = {}
         if ckpt_params is not None:
             self.save_hyperparameters(ckpt_params)
         
@@ -323,6 +339,11 @@ class RegressionModel(pl.LightningModule):
         if ckpt_params is None:
             ckpt_params = {}
         ckpt_params['model_class'] = self.__class__.__name__
+        ckpt_params['backbone_class'] = model.__class__.__name__
+        if hasattr(model, 'model_conf'):
+            ckpt_params['model_conf'] = model.model_conf
+        else:
+            ckpt_params['model_conf'] = {}
         if ckpt_params is not None:
             self.save_hyperparameters(ckpt_params)
         # Regression metrics
@@ -344,7 +365,7 @@ class RegressionModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, rowinfo = batch
         labels = rowinfo['label']
-        logits = self(x) / 2.0
+        logits = self(x)
         preds = F.sigmoid(logits.squeeze(1)) * 100.0
         loss = F.mse_loss(preds, labels.float())
         self.training_loss_mean.update(loss)
@@ -359,8 +380,8 @@ class RegressionModel(pl.LightningModule):
         x, rowinfo = batch
         labels = rowinfo['label']
         accs = rowinfo['ACCESSION']
-        logits = self(x) / 10.0
-        preds = torch.sigmoid(logits.squeeze(1)) * 100.0
+        logits = self(x)
+        preds = F.sigmoid(logits.squeeze(1)) * 100.0
         loss = F.mse_loss(preds, labels.float())
         
         # Store predictions and labels for later use

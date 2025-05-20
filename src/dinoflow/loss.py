@@ -86,6 +86,45 @@ class KoLeoLoss(nn.Module):
         return loss
     
 
+
+class KDELoss(nn.Module):
+    """
+    KDE embedding regularizer using the von Mises-Fisher (vMF) kernel. 
+    Kappa is concetration paramter that controls kernel sharpness.
+    """
+    def __init__(self, concentration=2.0, eps=1e-8):
+        super().__init__()
+        self.concentration = concentration
+        self.eps = eps
+
+    def forward(self, student_output, eps=1e-8):
+        """
+        Args:
+            student_output (torch.Tensor): shape (B, D).
+        """
+        
+        # Normalize embeddings to unit L2 norm
+        x = F.normalize(student_output, p=2, dim=-1, eps=eps)
+
+        # Compute cosine similarities between all pairs
+        dots = torch.mm(x, x.t())  
+
+        # Zero out diagonal self-similarities
+        batch_size = x.size(0)
+        dots.fill_diagonal_(0.0)
+
+        # Apply von Mises-Fisher kernel: exp(kappa * cos(theta))
+        kernel_matrix = torch.exp(self.concentration * dots)
+
+        # Estimate density for each by summing across its neighbors
+        densities = kernel_matrix.sum(dim=1) / (batch_size - 1)
+
+        # Take negative log-density and average across batch
+        loss = torch.log(densities + eps).mean()
+
+        return loss
+    
+
 class CosineSimLoss(nn.Module):
     def __init__(self, device='cpu'):
         super().__init__()

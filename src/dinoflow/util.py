@@ -52,6 +52,15 @@ def lr_for_iter(step_count, warmup_iters, max_lr, min_lr, lr_decay_iters):
     return lr
 
 
+class ConstrantLRScheduler(LRScheduler):
+    def __init__(self, optimizer, lr):
+        self.optimizer = optimizer
+        self.lr = lr
+        super().__init__(optimizer)
+
+    def get_lr(self):
+        return [self.lr for _ in self.optimizer.param_groups]
+
 class WarmupCosineLRScheduler(LRScheduler):
     """ A learning rate schedule that increases linearly from 0 to max_lr over warmup_iters, then
      decreases using cosine decay back down to min_lr for lr_decay_iters, then stays there forever

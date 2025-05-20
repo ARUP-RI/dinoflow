@@ -415,7 +415,14 @@ class TubeData(Dataset):
     
     def get_row_data(self, i):
         row = self.data.iloc[i]
-        return row.to_dict()
+        return row.to_dict()    
+
+    def get_by_accession(self, accession):
+        """
+        Find the row in the dataframe that matches the accession, then return whatever __getitem__ does for that row
+        """
+        row = self.data[self.data['ACCESSION'] == accession]
+        return self.__getitem__(row.index[0])
     
     def positive_negative_samples(self):
         pos = self.data[self.data[self.labelkey] == 1]
