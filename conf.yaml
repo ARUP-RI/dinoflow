@@ -14,6 +14,10 @@ model:
   d_ff: 2048
   layer_type: "swiglu"  # "swiglu" or "normal"
 
+  # IlseBagModel only
+  proto_dim: 256
+  bag_classes: 1
+
 
 training:
   batch_size: 128

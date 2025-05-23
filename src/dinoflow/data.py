@@ -365,6 +365,12 @@ class NoLabelTubes(Dataset):
 
 
 class TubeData(Dataset):
+    """
+    A DataSet of flow tubes. Paths to the actual tube files (.pt) along with labels are given as an input CSV file
+    This can can optionally return a subset of the standard b, t, and m tubes by using the tubes_to_return arg
+    If multiple tubes are present, the return value of the __getitem__ is a dictionary keyed by tube type
+    But if there's only one tube (e.g. tube_type="b"), then just the tube tensor is returned, not a dictionary
+    """
 
     def __init__(self, labelcsv, events_to_return=-1, data_root="/", tubes_to_return=["b", "t", "m"], labelkey="label", transforms=None):
         if isinstance(labelcsv, str):
@@ -386,6 +392,15 @@ class TubeData(Dataset):
         for tube in self.tubes_to_return:
             tubedata = torch.load(self.dataroot / row['path'], weights_only=False)
             if self.events_to_return != -1:
+                if tubedata[tube].shape[0] < self.events_to_return:
+                    # repeat the events in the sample until we have enough
+                    num_repeats = self.events_to_return // tubedata[tube].shape[0] + 1
+                    logger.info(f"Repeating {tube} {num_repeats} times to get {self.events_to_return} events")
+                    tubedata[tube] = tubedata[tube].repeat(num_repeats, 1)
+                    logger.info(f"New shape of {tube}: {tubedata[tube].shape}")
+                    tubedata[tube] = tubedata[tube][0:self.events_to_return, :]
+                    
+                
                 tubes[tube] = subsample_events(tubedata[tube], self.events_to_return)
             else:
                 tubes[tube] = tubedata[tube]

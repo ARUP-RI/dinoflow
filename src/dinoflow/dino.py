@@ -22,7 +22,7 @@ import numpy as np
 import logging
 
 
-from dinoflow.models import TubeEncoder, TubeEncoderWithProjection
+from dinoflow.models import IlseBagModel, IlseBagModelWithProjection, TubeEncoder, TubeEncoderWithProjection
 from dinoflow import data
 from dinoflow.loss import KoLeoLoss, CosineSimLoss, SelfCosineSimLoss, KDELoss
 from dinoflow.data import scale, shift, shuffle, compose, noise, standardize_range, subsample_events, NoLabelTubes, subsample_batch
@@ -389,6 +389,26 @@ def train_dino(conf, run_name):
             hidden_dim=conf['model']['hidden_dim'],
             projection_dim=conf['model']['projection_dim'],
             layer_type=conf['model']['layer_type']).to(DEVICE)
+
+        # student = IlseBagModelWithProjection(
+        #     num_features=conf['model']['num_features'],
+        #     model_embed_dim=conf['model']['model_dim'],
+        #     output_classes=conf['model']['model_dim'],
+        #     proto_dim=conf['model']['proto_dim'],
+        #     bag_classes=conf['model']['bag_classes'],
+        #     hidden_dim=conf['model']['hidden_dim'],
+        #     projection_dim=conf['model']['projection_dim']
+        # ).to(DEVICE)
+
+        # teacher = IlseBagModelWithProjection(
+        #     num_features=conf['model']['num_features'],
+        #     model_embed_dim=conf['model']['model_dim'],
+        #     output_classes=conf['model']['model_dim'],
+        #     proto_dim=conf['model']['proto_dim'],
+        #     bag_classes=conf['model']['bag_classes'],
+        #     hidden_dim=conf['model']['hidden_dim'],
+        #     projection_dim=conf['model']['projection_dim'],
+        # ).to(DEVICE)
 
         optimizer = torch.optim.AdamW(student.parameters(), lr=conf['training']['min_lr'])
 
