@@ -1,3 +1,4 @@
+import comet_ml  # Must be FIRST import
 import logging
 from functools import partial
 import os
@@ -174,8 +175,9 @@ def load_featmeans_stds(conf, tube_type):
         raise ValueError(f"Unknown tube type: {tube_type}")
 
 
-def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor=1):
+def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, comet_run_name, positive_repeat_factor=1):
     torch.set_float32_matmul_precision('medium')
+
 
     # Repeat rows in positive samples to balance the dataset
     if positive_repeat_factor > 1:
@@ -228,10 +230,10 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
 
 
     comet_logger = CometLogger(
-            workspace="brendan",  # Optional
-            save_dir="dinoflow_classifier_runs",  # Optional
+            workspace=comet_workspace,  # Optional
+            save_dir="dinoflow_classifier_runs",  # Optional 
             project_name=comet_project,  # Optional
-            experiment_name=run_name,  # Optional
+            experiment_name=comet_run_name,  # Optional
         )
 
     checkpoint_dir = f"dinoflow_eval_{run_name}"
@@ -270,7 +272,10 @@ def train(run_name, train_labels, test_labels,
           events: int = 4096, 
           epochs: int = 25, 
           mode: str = 'binary', 
-          num_classes: int = 1) :
+          num_classes: int = 1,
+          comet_workspace: str = None,
+          comet_project: str = None,
+          comet_run_name: str = None):
     """
     Evaluate the model on the test set
     """
@@ -288,7 +293,7 @@ def train(run_name, train_labels, test_labels,
 
 
     if mode == 'binary':
-        model = BinaryClassificationModel(combined, emit_predictions=True)
+        model = BinaryClassificationModel(combined, emit_predictions=True, comet_project_name=comet_project)
     elif mode == 'multiclass':
         model = ClassificationModel(combined, num_classes=num_classes, emit_predictions=True)
     elif mode == 'regression':
@@ -331,7 +336,7 @@ def train(run_name, train_labels, test_labels,
         logger.info("Unfreezing backbone")
         backbone.train()
 
-    _run_trainer(model, train_labels, test_labels, [tube_type], run_name, labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor)
+    _run_trainer(model, train_labels, test_labels, [tube_type], run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, comet_run_name, positive_repeat_factor)
     
 
 @app.command()
@@ -530,9 +535,9 @@ def trainsomclassifier(train_csv: str,
     comet_project = model.comet_project
 
     comet_logger = CometLogger(
-            workspace="brendan",  # Optional
-            project=comet_project,  # Optional
-            name=run_name,  # Optional
+            workspace="mattiamg",  # Optional
+            project="may-2025-test",  # Optional
+            #name=run_name,  # Optional
             save_dir="dinoflow_classifier_runs",  # Optional
         )
     

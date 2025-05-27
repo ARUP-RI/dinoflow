@@ -23,9 +23,9 @@ export TORCH_NCCL_TRACE_BUFFER_SIZE=1 # This is for debugging NCCL issues
 
 uv run src/dinoflow/eval.py train \
     $1 \
-    /home/22319/data/brendan/dinoflow/casedx_2024-08-21_noreport_train_with_m_projections.csv \
-    /home/22319/data/brendan/dinoflow/casedx_2024-08-21_noreport_test_with_m_projections.csv \
-    /home/22319/data/brendan/dinoflow/checkpoints/b_sml_moreaug/b_sml_moreaug_epoch99.pt \
+    /mnt/ri_share/Data/flow2/casedx_2024-08-21_noreport_train_with_m_projections.csv \
+    /mnt/ri_share/Data/flow2/casedx_2024-08-21_noreport_test_with_m_projections.csv \
+    /mnt/ri_share/Data/flow2/dinoflow_checkpoints/b_sml_moreaug/b_sml_moreaug_epoch99.pt \
     conf.yaml \
     --labelkey 'AML' \
     --mode 'binary' \
@@ -34,5 +34,8 @@ uv run src/dinoflow/eval.py train \
     --dataroot /data2/brendan/flow/ \
     --events 4096 \
     --batch-size 128 \
-    --epochs 50
+    --epochs 5 \
+    --comet-workspace "mattiamg" \
+    --comet-project "may-2025-test" \
+    --comet-run-name "testarossa"
 
