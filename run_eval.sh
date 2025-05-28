@@ -37,5 +37,5 @@ uv run src/dinoflow/eval.py train \
     --epochs 5 \
     --comet-workspace "r-i" \
     --comet-project "test-dino" \
-    --comet-run-name "testarossa"
+    --comet-run-name "testaferro" 
 

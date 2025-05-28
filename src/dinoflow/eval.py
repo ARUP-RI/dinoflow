@@ -229,12 +229,15 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
         #assert len(valdata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
 
 
+    print(f"comet_workspace: {comet_workspace}, comet_project: {comet_project}, comet_run_name: {comet_run_name}")
+    
     comet_logger = CometLogger(
-            workspace=comet_workspace,  # Optional
+            workspace=comet_workspace if comet_workspace is not None else "r-i",  # Optional
             save_dir="dinoflow_classifier_runs",  # Optional 
-            project_name=comet_project,  # Optional
+            project_name=comet_project if comet_workspace is not None else "no-name-project",  # Optional
             experiment_name=comet_run_name,  # Optional
         )
+
 
     checkpoint_dir = f"dinoflow_eval_{run_name}"
     logger.info(f"Checkpoint monitor: {checkpoint_monitor_val}, mode: {checkpoint_monitor_mode}")
@@ -295,9 +298,9 @@ def train(run_name, train_labels, test_labels,
     if mode == 'binary':
         model = BinaryClassificationModel(combined, emit_predictions=True, comet_project_name=comet_project)
     elif mode == 'multiclass':
-        model = ClassificationModel(combined, num_classes=num_classes, emit_predictions=True)
+        model = ClassificationModel(combined, num_classes=num_classes, emit_predictions=True, comet_project_name=comet_project)
     elif mode == 'regression':
-        model = RegressionModel(combined, emit_predictions=True)
+        model = RegressionModel(combined, emit_predictions=True, comet_project_name=comet_project)
         assert positive_repeat_factor == 1
     else:
         raise ValueError(f"Unknown mode: {mode}")
