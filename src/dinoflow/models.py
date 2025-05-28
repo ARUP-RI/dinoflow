@@ -315,6 +315,30 @@ class IlseBagModel(nn.Module):
         return x
     
 
+
+class IlseBagModelWithProjection(nn.Module):
+
+    def __init__(self, num_features, model_embed_dim, output_classes=1, proto_dim=256, bag_classes=1, hidden_dim=1024, projection_dim=4096):
+        super().__init__()
+        self.model_conf = {
+            'num_features': num_features,
+            'model_embed_dim': model_embed_dim,
+            'output_classes': output_classes,
+            'proto_dim': proto_dim,
+            'bag_classes': bag_classes
+        }
+        self.instance_encoder = MLP(num_features, model_embed_dim, model_embed_dim, n_layers=2, residual=False)
+        self.mil_attn = IlseBagEncoder(model_embed_dim, proto_dim, bag_classes)
+        # self.output_head = MLP(model_embed_dim * bag_classes, 128, output_classes, n_layers=2, residual=False)
+        self.projection_head = ProjectionHead(model_embed_dim, hidden_dim, projection_dim)
+        
+    def forward(self, x):
+        x = self.instance_encoder(x)
+        x, attn = self.mil_attn(x)
+        x = self.projection_head(x)
+        return x
+        
+
 class Ilse3TubeModel(nn.Module):
 
     def __init__(self, num_features, model_embed_dim, output_classes=1, proto_dim=256, bag_classes=1):

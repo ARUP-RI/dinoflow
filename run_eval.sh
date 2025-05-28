@@ -27,8 +27,8 @@ uv run src/dinoflow/eval.py train \
     /mnt/ri_share/Data/flow2/casedx_2024-08-21_noreport_test_with_m_projections.csv \
     /mnt/ri_share/Data/flow2/dinoflow_checkpoints/b_sml_moreaug/b_sml_moreaug_epoch99.pt \
     conf.yaml \
-    --labelkey 'AML' \
-    --mode 'binary' \
+    --labelkey 'viability' \
+    --mode 'regression' \
     --tube-type b \
     --freeze-backbone \
     --dataroot /data2/brendan/flow/ \

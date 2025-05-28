@@ -61,8 +61,10 @@ def load_model_from_pl_checkpoint(checkpoint: str, device=None):
     Load a model from a checkpoint saved by a pytorch-lightning trainer
     """
     ckpt = torch.load(checkpoint, weights_only=False)
-    model_conf = ckpt['hyper_parameters']['model_conf']
-    if model_conf.get('backbone_class') == 'CombinedModel':
+    hparams = ckpt['hyper_parameters']
+    model_conf = hparams['model_conf']
+    logger.info(f"Model config: {model_conf}")
+    if hparams.get('backbone_class') == 'CombinedModel':
         backbone = TubeEncoder(
             num_features=model_conf['num_features'],
             model_embed_dim=model_conf['model_embed_dim'],
@@ -75,7 +77,7 @@ def load_model_from_pl_checkpoint(checkpoint: str, device=None):
                                   num_classes=1, 
                                   output_scale_factor=model_conf.get('output_scale_factor', 1.0))
         model = CombinedModel(backbone, classifier, freeze_backbone=True)
-    elif model_conf.get('backbone_class') == 'IlseBagModel':
+    elif hparams.get('backbone_class') == 'IlseBagModel':
         model = IlseBagModel(
             num_features=model_conf['num_features'],
             model_embed_dim=model_conf['model_embed_dim'],
@@ -83,21 +85,21 @@ def load_model_from_pl_checkpoint(checkpoint: str, device=None):
             proto_dim=model_conf['proto_dim'],
             bag_classes=model_conf['bag_classes'],
         )
-    elif model_conf.get('backbone_class') == 'DeepCyTof':
+    elif hparams.get('backbone_class') == 'DeepCyTof':
         from dinoflow.cnnmodel import DeepCyTof
         model = DeepCyTof(
             input_channels=model_conf['input_channels'],
             num_features=model_conf['num_features'],
             pool_height=model_conf['pool_height'],
         )
-    elif model_conf.get('backbone_class') == 'ClassificationHead':
+    elif hparams.get('backbone_class') == 'ClassificationHead':
         model = ClassificationHead(
             num_features=model_conf['num_features'],
             num_classes=model_conf['num_classes'],
             output_scale_factor=model_conf['output_scale_factor'],
         )
     else:
-        raise ValueError(f"Unknown backbone class: {model_conf.get('backbone_class')}")
+        raise ValueError(f"Unknown backbone class: {hparams.get('backbone_class')}")
     
     model.load_state_dict(munge_state_dict(ckpt['state_dict']), strict=True)
     model.eval()
@@ -671,7 +673,7 @@ def predict_onetube(checkpoint: str,
                     tube_type: str,
                     labelkey: str, 
                     dataroot: str = ".", 
-                    events: int = 4096, 
+                    events: int = 8192, 
                     batch_size: int = 16):
     """
     Given a saved LightningModel (for a single tube), predict the labels for the test set
@@ -679,26 +681,27 @@ def predict_onetube(checkpoint: str,
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
     # Load the lightning model, then find the model conf that defines the backbone
-    ckpt = torch.load(checkpoint, weights_only=False, map_location='cpu')
-    default_model_conf = {
-        "num_features": 13,
-        "model_embed_dim": 256,
-        "layers": 6,
-        "heads": 4,
-        "projection_dim": 4096,
-        "hidden_dim": 1024,
-        "d_ff": 1024,
-        "layertype": "swiglu"
-    }
-    if 'model_conf' in ckpt['hyper_parameters']:
-        logger.info("Found model_conf in checkpoint, using it")
-        model_conf = ckpt['hyper_parameters']['model_conf'] # Backbone params
-    else:
-        logger.warning("No model_conf found in checkpoint, using default (small, swiglu)")
-        model_conf = default_model_conf
+    # ckpt = torch.load(checkpoint, weights_only=False, map_location='cpu')
+    # default_model_conf = {
+    #     "num_features": 13,
+    #     "model_embed_dim": 256,
+    #     "layers": 6,
+    #     "heads": 4,
+    #     "projection_dim": 4096,
+    #     "hidden_dim": 1024,
+    #     "d_ff": 1024,
+    #     "layertype": "swiglu"
+    # }
+    # if 'model_conf' in ckpt['hyper_parameters']:
+    #     logger.info("Found model_conf in checkpoint, using it")
+    #     model_conf = ckpt['hyper_parameters']['model_conf'] # Backbone params
+    # else:
+    #     logger.warning("No model_conf found in checkpoint, using default (small, swiglu)")
+    #     model_conf = default_model_conf
     
     
-
+    model = load_model_from_pl_checkpoint(checkpoint, device=device)
+    model.eval()
     model.to(device)
     
     testdata = TubeData(test_labels, data_root=dataroot, labelkey=labelkey, 
