@@ -177,7 +177,7 @@ def load_featmeans_stds(conf, tube_type):
         raise ValueError(f"Unknown tube type: {tube_type}")
 
 
-def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, comet_run_name, positive_repeat_factor=1):
+def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor=1):
     torch.set_float32_matmul_precision('medium')
 
 
@@ -231,13 +231,13 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
         #assert len(valdata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
 
 
-    print(f"comet_workspace: {comet_workspace}, comet_project: {comet_project}, comet_run_name: {comet_run_name}")
+    print(f"comet_workspace: {comet_workspace}, comet_project: {comet_project}, run_name: {run_name}")
     
     comet_logger = CometLogger(
             workspace=comet_workspace if comet_workspace is not None else "r-i",  # Optional
             save_dir="dinoflow_classifier_runs",  # Optional 
             project_name=comet_project if comet_workspace is not None else "no-name-project",  # Optional
-            experiment_name=comet_run_name,  # Optional
+            experiment_name=run_name,  # Optional
         )
 
 
@@ -279,8 +279,7 @@ def train(run_name, train_labels, test_labels,
           mode: str = 'binary', 
           num_classes: int = 1,
           comet_workspace: str = None,
-          comet_project: str = None,
-          comet_run_name: str = None):
+          comet_project: str = None):
     """
     Evaluate the model on the test set
     """
@@ -341,7 +340,7 @@ def train(run_name, train_labels, test_labels,
         logger.info("Unfreezing backbone")
         backbone.train()
 
-    _run_trainer(model, train_labels, test_labels, [tube_type], run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, comet_run_name, positive_repeat_factor)
+    _run_trainer(model, train_labels, test_labels, [tube_type], run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
     
 
 @app.command()
