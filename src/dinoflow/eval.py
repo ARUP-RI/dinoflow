@@ -216,7 +216,7 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=4)    
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
 
-    val_events = 2 * int(events)
+    val_events = 1 * int(events)
     logger.info(f"Train events: {int(events)}, val events: {val_events}")
     valdata = TubeData(test_labels, tubes_to_return=tubes, events_to_return=val_events, data_root=dataroot, labelkey=labelkey, transforms=val_transforms)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=4)
@@ -533,8 +533,8 @@ def trainsomclassifier(train_csv: str,
 
     comet_logger = CometLogger(
             workspace="brendan",  # Optional
-            project=comet_project,  # Optional
-            name=run_name,  # Optional
+            project_name=comet_project,  # Optional
+            experiment_name=run_name,  # Optional
             save_dir="dinoflow_classifier_runs",  # Optional
         )
     
@@ -576,7 +576,7 @@ def train_deepcytof(train_csv: str,
         tube_type = tube_type.split(",")
 
     assert mode in ('binary', 'multiclass', 'regression'), f"Unknown mode: {mode}"
-    model = DeepCyTof(num_features=13, pool_height=events, output_scale_factor=0.5 if mode == 'regression' else 1.0)
+    model = DeepCyTof(num_features=13, pool_height=events, output_scale_factor=2.0 if mode == 'regression' else 1.0)
     model = model.to(DEVICE)
 
     if mode == 'binary':

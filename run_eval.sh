@@ -23,12 +23,12 @@ export TORCH_NCCL_TRACE_BUFFER_SIZE=1 # This is for debugging NCCL issues
 
 uv run src/dinoflow/eval.py train \
     $1 \
-    /home/22319/data/brendan/dinoflow/viabs_250304_train_with_projections.csv \
-    /home/22319/data/brendan/dinoflow/viabs_250304_test_with_projections.csv \
-    /home/22319/data/brendan/dinoflow/checkpoints/b_tiny/b_tiny_epoch99.pt \
+    /home/22319/data/brendan/dinoflow/casedx_2024-08-21_noreport_train_with_m_projections.csv \
+    /home/22319/data/brendan/dinoflow/casedx_2024-08-21_noreport_test_with_m_projections.csv \
+    /home/22319/data/brendan/dinoflow/checkpoints/b_sml_bigaug/b_sml_bigaug_epoch99.pt \
     conf.yaml \
-    --labelkey 'viability' \
-    --mode 'regression' \
+    --labelkey '5-10-BNHL' \
+    --mode 'binary' \
     --tube-type b \
     --freeze-backbone \
     --dataroot /data2/brendan/flow/ \

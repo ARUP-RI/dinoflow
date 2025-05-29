@@ -25,6 +25,7 @@ training:
   checkpoint_freq: 10
   center_momentum: 0.99
   teacher_momentum: 0.999
+  loss_type: kde
  
   temperature_start: 0.05
   temperature_end: 0.1

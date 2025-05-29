@@ -25,6 +25,7 @@ training:
   checkpoint_freq: 10
   center_momentum: 0.99
   teacher_momentum: 0.999
+  loss_type: "koleo"
  
   temperature_start: 0.05
   temperature_end: 0.1
@@ -41,11 +42,11 @@ training:
 
   transforms:
     scale_prob: 0.5
-    scale_range: 0.4  # Original 0.2
+    scale_range: 0.8  # Original 0.2
     shift_prob: 0.5
-    shift_range: 0.4  # Original 0.2
+    shift_range: 0.8  # Original 0.2
     noise_prob: 0.75
-    noise_range: 0.75  # Original 0.5
+    noise_range: 1.5  # Original 0.5
 
 
 

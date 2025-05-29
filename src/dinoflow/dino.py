@@ -61,6 +61,7 @@ class TrainingConfig:
     student_events: int
     student_reps: int
     batch_size: int
+    loss_type: str
     teacher_momentum: float
     center_momentum: float
     loss_weight_sched: LinearScheduler
@@ -159,8 +160,16 @@ def dino_epoch(loader: DataLoader,
     yt_self_loss_sum = 0
     yt_other_loss_sum = 0
     dino_loss_sum = 0
-    koleoloss = KoLeoLoss(device=DEVICE)
-    kdeloss = KDELoss()
+    loss_type = training_conf.loss_type
+    logger.info(f"Using loss type: {loss_type}")
+    anc_loss_fn = None
+    if loss_type == 'kde':
+        anc_loss_fn = KDELoss()
+    elif loss_type == 'koleo':
+        anc_loss_fn = KoLeoLoss(device=DEVICE)
+    else:
+        raise ValueError(f"Unknown loss type: {loss_type} (must be 'kde' or 'koleo')")
+    
     # cos_sim_loss = CosineSimLoss(device=DEVICE)
     proto_cosim_loss = SelfCosineSimLoss()
     cs_loss_sum = 0
@@ -187,21 +196,21 @@ def dino_epoch(loader: DataLoader,
 
             logger.debug("Computing loss")
             dinoloss = dino_loss(y_s, y_t, teacher_center, s_temp=0.2, t_temp=training_conf.temperature_sched.current_value())
-            koleo_batch_loss = torch.tensor(0.0).to(DEVICE)
+            anc_loss_batch_loss = torch.tensor(0.0).to(DEVICE)
             #Important to loop over n_student_reps here, since we don't want to include the same sample twice in the loss
             # (remember KoLeo loss looks at the two nearest neighbors, which will probably be the same sample if we include them both)
             for nr in range(training_conf.student_reps):
                 # test_kde_loss = kdeloss(y_s[(nr * actual_batch_size):((nr + 1) * actual_batch_size), :])
                 # test_koleo_loss = koleoloss(y_s[(nr * actual_batch_size):((nr + 1) * actual_batch_size), :])
                 # logger.info(f"Test kde loss: {test_kde_loss.item()}, test koleo loss: {test_koleo_loss.item()}")
-                koleo_batch_loss += kdeloss(y_s[(nr * actual_batch_size):((nr + 1) * actual_batch_size), :])
-            koleo_loss = koleo_batch_loss / training_conf.student_reps
+                anc_loss_batch_loss += anc_loss_fn(y_s[(nr * actual_batch_size):((nr + 1) * actual_batch_size), :])
+            anc_loss = anc_loss_batch_loss / training_conf.student_reps
             
             protot_cosim_loss = torch.tensor(0) #proto_cosim_loss(student.module.sdpa_prototype_emb_stack.L)
             
             
-            loss = dinoloss + koleo_loss_weight * koleo_loss
-            koleo_loss_sum += koleo_loss.item()
+            loss = dinoloss + koleo_loss_weight * anc_loss
+            koleo_loss_sum += anc_loss.item()
             proto_loss_sum += 0 #protot_cosim_loss.item()
 
             epoch_loss_sum += loss.item()
@@ -295,6 +304,7 @@ def build_training_config(conf, optimizer):
         student_events=conf['training']['n_student_events'],
         student_reps=conf['training']['n_student_reps'],
         batch_size=conf['training']['batch_size'],
+        loss_type=conf['training'].get('loss_type', 'kde'),
         teacher_momentum=conf['training']['teacher_momentum'],
         center_momentum=conf['training']['center_momentum'],
         loss_weight_sched=LinearScheduler(conf['training']['koleo_loss_weight_start'], conf['training']['koleo_loss_weight_end'], conf['training']['koleo_loss_weight_steps']),
@@ -469,6 +479,7 @@ def train_dino(conf, run_name):
         partial(shift, prob=transforms_conf['shift_prob'], scale=transforms_conf['shift_range']),
         partial(noise, prob=transforms_conf['noise_prob'], scale=transforms_conf['noise_range']),
     ])
+
 
     #logger.info(f"Proc: {os.getpid()} device: {device_id} w: {student.module.backbone.embedding[0].weight[0, :]}")
     for epoch in range(start_epoch, start_epoch + conf['training']['epochs']):
