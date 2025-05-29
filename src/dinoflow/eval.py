@@ -1,3 +1,4 @@
+import comet_ml  # Must be FIRST import
 import logging
 from functools import partial
 import os
@@ -176,8 +177,9 @@ def load_featmeans_stds(conf, tube_type):
         raise ValueError(f"Unknown tube type: {tube_type}")
 
 
-def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor=1):
+def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, comet_run_name, positive_repeat_factor=1):
     torch.set_float32_matmul_precision('medium')
+
 
     # Repeat rows in positive samples to balance the dataset
     if positive_repeat_factor > 1:
@@ -229,12 +231,15 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
         #assert len(valdata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
 
 
+    print(f"comet_workspace: {comet_workspace}, comet_project: {comet_project}, comet_run_name: {comet_run_name}")
+    
     comet_logger = CometLogger(
-            workspace="brendan",  # Optional
-            save_dir="dinoflow_classifier_runs",  # Optional
-            project_name=comet_project,  # Optional
-            experiment_name=run_name,  # Optional
+            workspace=comet_workspace if comet_workspace is not None else "r-i",  # Optional
+            save_dir="dinoflow_classifier_runs",  # Optional 
+            project_name=comet_project if comet_workspace is not None else "no-name-project",  # Optional
+            experiment_name=comet_run_name,  # Optional
         )
+
 
     checkpoint_dir = f"dinoflow_eval_{run_name}"
     logger.info(f"Checkpoint monitor: {checkpoint_monitor_val}, mode: {checkpoint_monitor_mode}")
@@ -272,7 +277,10 @@ def train(run_name, train_labels, test_labels,
           events: int = 4096, 
           epochs: int = 25, 
           mode: str = 'binary', 
-          num_classes: int = 1) :
+          num_classes: int = 1,
+          comet_workspace: str = None,
+          comet_project: str = None,
+          comet_run_name: str = None):
     """
     Evaluate the model on the test set
     """
@@ -290,11 +298,11 @@ def train(run_name, train_labels, test_labels,
 
 
     if mode == 'binary':
-        model = BinaryClassificationModel(combined, emit_predictions=True)
+        model = BinaryClassificationModel(combined, emit_predictions=True, comet_project_name=comet_project)
     elif mode == 'multiclass':
-        model = ClassificationModel(combined, num_classes=num_classes, emit_predictions=True)
+        model = ClassificationModel(combined, num_classes=num_classes, emit_predictions=True, comet_project_name=comet_project)
     elif mode == 'regression':
-        model = RegressionModel(combined, emit_predictions=True)
+        model = RegressionModel(combined, emit_predictions=True, comet_project_name=comet_project)
         assert positive_repeat_factor == 1
     else:
         raise ValueError(f"Unknown mode: {mode}")
@@ -333,7 +341,7 @@ def train(run_name, train_labels, test_labels,
         logger.info("Unfreezing backbone")
         backbone.train()
 
-    _run_trainer(model, train_labels, test_labels, [tube_type], run_name, labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor)
+    _run_trainer(model, train_labels, test_labels, [tube_type], run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, comet_run_name, positive_repeat_factor)
     
 
 @app.command()

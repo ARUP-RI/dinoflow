@@ -13,7 +13,7 @@ from dinoflow import util
 
 
 class BinaryClassificationModel(pl.LightningModule):
-    def __init__(self, model, min_lr=0.00001, max_lr=0.00025, warmup_iters=10, lr_decay_iters=80, emit_predictions=False, ckpt_params=None, num_classes=1):
+    def __init__(self, model, min_lr=0.00001, max_lr=0.00025, warmup_iters=10, lr_decay_iters=80, emit_predictions=False, ckpt_params=None, num_classes=1, comet_project_name=None):
         super().__init__()
         assert num_classes==1, "Only one class permitted for binary"
         self.model = model #
@@ -25,6 +25,7 @@ class BinaryClassificationModel(pl.LightningModule):
         self.training_loss_mean = MeanMetric()
         self.validation_loss_mean = MeanMetric()
         self.emit_predictions = emit_predictions
+        self.comet_project_name = comet_project_name
         if ckpt_params is None:
             ckpt_params = {}
         ckpt_params['model_class'] = self.__class__.__name__
@@ -194,11 +195,11 @@ class BinaryClassificationModel(pl.LightningModule):
         
     @property
     def comet_project(self):
-        return 'dinoflow-classifier'
+        return self.comet_project_name
 
 
 class ClassificationModel(pl.LightningModule):
-    def __init__(self, model, num_classes, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False, ckpt_params=None):
+    def __init__(self, model, num_classes, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False, ckpt_params=None, comet_project_name=None):
         super().__init__()
         self.model = model
         self.num_classes = num_classes
@@ -206,6 +207,7 @@ class ClassificationModel(pl.LightningModule):
         self.max_lr = max_lr
         self.warmup_iters = warmup_iters
         self.lr_decay_iters = lr_decay_iters
+        self.comet_project_name = comet_project_name
         
         # Multi-class metrics
         from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score
@@ -324,11 +326,11 @@ class ClassificationModel(pl.LightningModule):
         
     @property
     def comet_project(self):
-        return 'dinoflow-classifier'
+        return self.comet_project_name
 
 
 class RegressionModel(pl.LightningModule):
-    def __init__(self, model, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False, ckpt_params=None):
+    def __init__(self, model, min_lr=0.00001, max_lr=0.0001, warmup_iters=20, lr_decay_iters=250, emit_predictions=False, ckpt_params=None, comet_project_name=None):
         super().__init__()
         self.model = model
         self.min_lr = min_lr
@@ -336,6 +338,7 @@ class RegressionModel(pl.LightningModule):
         self.warmup_iters = warmup_iters
         self.lr_decay_iters = lr_decay_iters
         self.emit_predictions = emit_predictions
+        self.comet_project_name = comet_project_name
         if ckpt_params is None:
             ckpt_params = {}
         ckpt_params['model_class'] = self.__class__.__name__
@@ -480,4 +483,4 @@ class RegressionModel(pl.LightningModule):
         
     @property
     def comet_project(self):
-        return 'dinoflow-viability'
+        return self.comet_project_name
