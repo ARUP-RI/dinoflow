@@ -206,7 +206,7 @@ class BTMTubes(nn.Module):
     """
     Combines the B, T, and M backbones and generates a final prediction
     """
-    def __init__(self, num_features, model_embed_dim, backbone_heads, backbone_layers, output_classes, d_ff=2048, include_classifier=True, layer_type='normal', output_scale_factor=1.0):
+    def __init__(self, num_features, model_embed_dim, backbone_heads, backbone_layers, output_classes, d_ff=2048, include_classifier=True, layer_type='normal', output_scale_factor=1.0, dropout=0.1):
         super().__init__()
         self.model_conf = {
             'num_features': num_features,
@@ -224,6 +224,9 @@ class BTMTubes(nn.Module):
         self.m_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff, layer_type)
         self.include_classifier = include_classifier
         if include_classifier:
+            self.b_dropout = nn.Dropout(dropout)
+            self.t_dropout = nn.Dropout(dropout)
+            self.m_dropout = nn.Dropout(dropout)
             self.b_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
             self.t_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
             self.m_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
@@ -244,9 +247,9 @@ class BTMTubes(nn.Module):
         t_out = self.t_backbone(t_events)
         m_out = self.m_backbone(m_events)
         if self.include_classifier:
-            b_out = self.b_mlp(b_out)
-            t_out = self.t_mlp(t_out)
-            m_out = self.m_mlp(m_out)
+            b_out = self.b_mlp(self.b_dropout(b_out))
+            t_out = self.t_mlp(self.t_dropout(t_out))
+            m_out = self.m_mlp(self.m_dropout(m_out))            
             x = self.combined(torch.cat((b_out, t_out, m_out), dim=1)) * self.output_scale_factor
         else:
             x = torch.cat((b_out, t_out, m_out), dim=1) 
