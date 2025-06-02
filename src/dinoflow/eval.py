@@ -178,7 +178,6 @@ def load_featmeans_stds(conf, tube_type):
 def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor=1):
     torch.set_float32_matmul_precision('medium')
 
-    print(f"comet_workspace: {comet_workspace}, comet_project: {comet_project}, comet_run_name: {run_name}")
     # Repeat rows in positive samples to balance the dataset
     
     if positive_repeat_factor > 1:
@@ -204,8 +203,8 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     checkpoint_monitor_mode = model.checkpoint_mode
     comet_project = model.comet_project
 
-    print(f"comet_workspace after: {comet_workspace}, comet_project: {comet_project}, comet_run_name: {run_name}")
 
+    
     traindata = TubeData(train_labels, tubes_to_return=tubes, events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=train_transforms)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=8)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
@@ -231,7 +230,6 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
         logger.info(f"Negative samples: {len(valdata.positive_negative_samples()[1])}")
         #assert len(valdata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
 
-    print(f"comet_workspace: {comet_workspace}, comet_project: {comet_project}, run_name: {run_name}")
     
     comet_logger = CometLogger(
             workspace=comet_workspace if comet_workspace is not None else "r-i",  # Optional
@@ -368,7 +366,6 @@ def train3tubes(run_name, train_labels, test_labels,
     b_backbone, modelconf = load_checkpoint(backbone_b)
     t_backbone, _ = load_checkpoint(backbone_t)
     m_backbone, _ = load_checkpoint(backbone_m)
-    print('modelconf2', modelconf)
 
 
     output_classes = 1 if mode == 'binary' or mode == 'regression' else num_classes
@@ -428,9 +425,6 @@ def train3tubes(run_name, train_labels, test_labels,
         b_backbone.train()
         t_backbone.train()
         m_backbone.train()
-
-    print(f"comet_workspace: {comet_workspace}, comet_project: {comet_project}")
-    print(f"positive_repeat_factor: {positive_repeat_factor}")
    
     _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
     
