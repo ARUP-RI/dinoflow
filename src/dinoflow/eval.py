@@ -386,7 +386,7 @@ def train3tubes(run_name, train_labels, test_labels,
 
 
     if mode == 'binary':
-        model = BinaryClassificationModel(btm, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
+        model = BinaryClassificationModel(btm, emit_predictions=True, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
     elif mode == 'multiclass':
         model = ClassificationModel(btm, num_classes=num_classes, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
     elif mode == 'regression':

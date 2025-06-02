@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUDA_VISIBLE_DEVICES=4,5,6,7
 
 
 export OMP_NUM_THREADS=8
@@ -33,12 +33,12 @@ uv run src/dinoflow/eval.py train3tubes \
     --labelkey 'NORMAL' \
     --mode 'binary' \
     --dataroot /data2/brendan/flow/ \
-    --events 8192 \
+    --events 4096 \
     --batch-size 32 \
     --epochs 25 \
-    --comet-workspace "r-i" \
-    --comet-project "test-dino" \
-    # --freeze-backbone \
-    # --freeze-backbone-layers 2 \
+    --comet-workspace "brendan" \
+    --comet-project "dinoflow-normal" \
+    --freeze-backbone \
+    --freeze-backbone-layers 2 \
 
 
