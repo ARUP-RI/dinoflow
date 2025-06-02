@@ -61,10 +61,8 @@ def load_model_from_pl_checkpoint(checkpoint: str, device=None):
     Load a model from a checkpoint saved by a pytorch-lightning trainer
     """
     ckpt = torch.load(checkpoint, weights_only=False)
-    hparams = ckpt['hyper_parameters']
-    model_conf = hparams['model_conf']
-    logger.info(f"Model config: {model_conf}")
-    if hparams.get('backbone_class') == 'CombinedModel':
+    model_conf = ckpt['hyper_parameters']['model_conf']
+    if model_conf.get('backbone_class') == 'CombinedModel':
         backbone = TubeEncoder(
             num_features=model_conf['num_features'],
             model_embed_dim=model_conf['model_embed_dim'],
@@ -77,7 +75,7 @@ def load_model_from_pl_checkpoint(checkpoint: str, device=None):
                                   num_classes=1, 
                                   output_scale_factor=model_conf.get('output_scale_factor', 1.0))
         model = CombinedModel(backbone, classifier, freeze_backbone=True)
-    elif hparams.get('backbone_class') == 'IlseBagModel':
+    elif model_conf.get('backbone_class') == 'IlseBagModel':
         model = IlseBagModel(
             num_features=model_conf['num_features'],
             model_embed_dim=model_conf['model_embed_dim'],
@@ -85,21 +83,21 @@ def load_model_from_pl_checkpoint(checkpoint: str, device=None):
             proto_dim=model_conf['proto_dim'],
             bag_classes=model_conf['bag_classes'],
         )
-    elif hparams.get('backbone_class') == 'DeepCyTof':
+    elif model_conf.get('backbone_class') == 'DeepCyTof':
         from dinoflow.cnnmodel import DeepCyTof
         model = DeepCyTof(
             input_channels=model_conf['input_channels'],
             num_features=model_conf['num_features'],
             pool_height=model_conf['pool_height'],
         )
-    elif hparams.get('backbone_class') == 'ClassificationHead':
+    elif model_conf.get('backbone_class') == 'ClassificationHead':
         model = ClassificationHead(
             num_features=model_conf['num_features'],
             num_classes=model_conf['num_classes'],
             output_scale_factor=model_conf['output_scale_factor'],
         )
     else:
-        raise ValueError(f"Unknown backbone class: {hparams.get('backbone_class')}")
+        raise ValueError(f"Unknown backbone class: {model_conf.get('backbone_class')}")
     
     model.load_state_dict(munge_state_dict(ckpt['state_dict']), strict=True)
     model.eval()
@@ -180,8 +178,8 @@ def load_featmeans_stds(conf, tube_type):
 def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor=1):
     torch.set_float32_matmul_precision('medium')
 
-
     # Repeat rows in positive samples to balance the dataset
+    
     if positive_repeat_factor > 1:
         train_labels = pd.read_csv(train_labels)
         positive_rows = train_labels[train_labels[labelkey] == 1]
@@ -205,6 +203,8 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     checkpoint_monitor_mode = model.checkpoint_mode
     comet_project = model.comet_project
 
+
+    
     traindata = TubeData(train_labels, tubes_to_return=tubes, events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=train_transforms)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=8)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
@@ -218,7 +218,7 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=4)    
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
 
-    val_events = 1 * int(events)
+    val_events = 2 * int(events)
     logger.info(f"Train events: {int(events)}, val events: {val_events}")
     valdata = TubeData(test_labels, tubes_to_return=tubes, events_to_return=val_events, data_root=dataroot, labelkey=labelkey, transforms=val_transforms)
     valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=4)
@@ -230,8 +230,6 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
         logger.info(f"Negative samples: {len(valdata.positive_negative_samples()[1])}")
         #assert len(valdata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
 
-
-    print(f"comet_workspace: {comet_workspace}, comet_project: {comet_project}, run_name: {run_name}")
     
     comet_logger = CometLogger(
             workspace=comet_workspace if comet_workspace is not None else "r-i",  # Optional
@@ -241,7 +239,7 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
         )
 
 
-    checkpoint_dir = f"dinoflow_eval_{run_name}"
+    checkpoint_dir = f"/mnt/ri_share/Data/flow2/dinoflow_study/dinoflow_eval_{run_name}"
     logger.info(f"Checkpoint monitor: {checkpoint_monitor_val}, mode: {checkpoint_monitor_mode}")
     trainer = pl.Trainer(max_epochs=epochs,
                         accelerator='auto',
@@ -344,31 +342,40 @@ def train(run_name, train_labels, test_labels,
     
 
 @app.command()
-def train3tubes(b_ckpt, t_ckpt, m_ckpt, 
-                train_labels, test_labels,
-                run_name,
-                labelkey: str = "label",
-                dataroot: str = ".",
-                events: int = 4096,
-                batch_size: int = 16,
-                epochs: int = 50,
-                freeze_backbone_layers: int = 0,
-                max_lr: float = 0.0001,
-                mode:str = 'binary',
+def train3tubes(run_name, train_labels, test_labels,
+                backbone_b: str, 
+                backbone_t: str, 
+                backbone_m: str,
+                conf: str,
+                dataroot: str = "/",
                 positive_repeat_factor: int = 1,
-                num_classes: int = 2):
+                labelkey: str = "label",
+                freeze_backbone: bool = False,
+                freeze_backbone_layers: int = 0,
+                batch_size: int = 16,
+                events: int = 4096,
+                epochs: int = 50,
+                mode: str = 'binary',
+                num_classes: int = 1,
+                max_lr: float = 0.0001,
+                comet_workspace: str = None,
+                comet_project: str = None,):
     # Helps with too many open files errors?
     torch.multiprocessing.set_sharing_strategy('file_system')
 
-    b_backbone, modelconf = load_checkpoint(b_ckpt)
-    t_backbone, _ = load_checkpoint(t_ckpt)
-    m_backbone, _ = load_checkpoint(m_ckpt)
+    b_backbone, modelconf = load_checkpoint(backbone_b)
+    t_backbone, _ = load_checkpoint(backbone_t)
+    m_backbone, _ = load_checkpoint(backbone_m)
 
 
     output_classes = 1 if mode == 'binary' or mode == 'regression' else num_classes
     output_scale_factor = 2.0 if mode == 'regression' else 1.0
 
     modelconf['output_classes'] = output_classes # Add it here so it can be saved in the checkpoint
+    modelconf['batch_size'] = batch_size
+    modelconf['events'] = events
+    modelconf['freeze_backbone'] = freeze_backbone
+    modelconf['freeze_backbone_layers'] = freeze_backbone_layers
 
     btm = BTMTubes(num_features=13,
                     model_embed_dim=modelconf['model_dim'],
@@ -381,30 +388,49 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
     btm.t_backbone = t_backbone
     btm.m_backbone = m_backbone
 
-    if freeze_backbone_layers > 0:
-        logger.info(f"Freezing backbone layers: {freeze_backbone_layers}")
-        for i in range(freeze_backbone_layers):
-            btm.b_backbone.encoder.layers[i].eval()
-            for p in btm.b_backbone.encoder.layers[i].parameters():
-                p.requires_grad = False
-            btm.t_backbone.encoder.layers[i].eval()
-            for p in btm.t_backbone.encoder.layers[i].parameters():
-                p.requires_grad = False
-            btm.m_backbone.encoder.layers[i].eval()
-            for p in btm.m_backbone.encoder.layers[i].parameters():
-                p.requires_grad = False
-
 
     if mode == 'binary':
-        model = BinaryClassificationModel(btm, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr)
+        model = BinaryClassificationModel(btm, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
     elif mode == 'multiclass':
-        model = ClassificationModel(btm, num_classes=num_classes, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr)
+        model = ClassificationModel(btm, num_classes=num_classes, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
     elif mode == 'regression':
-        model = RegressionModel(btm, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr)
+        model = RegressionModel(btm, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
     else:
         raise ValueError(f"Unknown mode: {mode}")
-
-    _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor)
+    
+    if freeze_backbone_layers > 0 and not freeze_backbone:
+        raise ValueError("freeze_backbone_layers > 0 requires freeze_backbone to be True")
+    if freeze_backbone:
+        if freeze_backbone_layers > 0:
+            logger.info(f"Freezing backbone layers: {freeze_backbone_layers}")
+            for i in range(freeze_backbone_layers):
+                btm.b_backbone.encoder.layers[i].eval()
+                for p in btm.b_backbone.encoder.layers[i].parameters():
+                    p.requires_grad = False
+                btm.t_backbone.encoder.layers[i].eval()
+                for p in btm.t_backbone.encoder.layers[i].parameters():
+                    p.requires_grad = False
+                btm.m_backbone.encoder.layers[i].eval()
+                for p in btm.m_backbone.encoder.layers[i].parameters():
+                    p.requires_grad = False
+        else:
+            logger.info("Freezing full backbone")
+            btm.b_backbone.eval()
+            for p in btm.b_backbone.parameters():
+                p.requires_grad = False
+            btm.t_backbone.eval()
+            for p in btm.t_backbone.parameters():
+                p.requires_grad = False
+            btm.m_backbone.eval()
+            for p in btm.m_backbone.parameters():
+                p.requires_grad = False
+    else:
+        logger.info("Unfreezing backbone")
+        b_backbone.train()
+        t_backbone.train()
+        m_backbone.train()
+   
+    _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
     
     
 
@@ -539,9 +565,9 @@ def trainsomclassifier(train_csv: str,
     comet_project = model.comet_project
 
     comet_logger = CometLogger(
-            workspace="brendan",  # Optional
-            project_name=comet_project,  # Optional
-            experiment_name=run_name,  # Optional
+            workspace="mattiamg",  # Optional
+            project="may-2025-test",  # Optional
+            #name=run_name,  # Optional
             save_dir="dinoflow_classifier_runs",  # Optional
         )
     
@@ -583,7 +609,7 @@ def train_deepcytof(train_csv: str,
         tube_type = tube_type.split(",")
 
     assert mode in ('binary', 'multiclass', 'regression'), f"Unknown mode: {mode}"
-    model = DeepCyTof(num_features=13, pool_height=events, output_scale_factor=2.0 if mode == 'regression' else 1.0)
+    model = DeepCyTof(num_features=13, pool_height=events, output_scale_factor=0.5 if mode == 'regression' else 1.0)
     model = model.to(DEVICE)
 
     if mode == 'binary':
@@ -672,7 +698,7 @@ def predict_onetube(checkpoint: str,
                     tube_type: str,
                     labelkey: str, 
                     dataroot: str = ".", 
-                    events: int = 8192, 
+                    events: int = 4096, 
                     batch_size: int = 16):
     """
     Given a saved LightningModel (for a single tube), predict the labels for the test set
@@ -680,27 +706,26 @@ def predict_onetube(checkpoint: str,
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
     # Load the lightning model, then find the model conf that defines the backbone
-    # ckpt = torch.load(checkpoint, weights_only=False, map_location='cpu')
-    # default_model_conf = {
-    #     "num_features": 13,
-    #     "model_embed_dim": 256,
-    #     "layers": 6,
-    #     "heads": 4,
-    #     "projection_dim": 4096,
-    #     "hidden_dim": 1024,
-    #     "d_ff": 1024,
-    #     "layertype": "swiglu"
-    # }
-    # if 'model_conf' in ckpt['hyper_parameters']:
-    #     logger.info("Found model_conf in checkpoint, using it")
-    #     model_conf = ckpt['hyper_parameters']['model_conf'] # Backbone params
-    # else:
-    #     logger.warning("No model_conf found in checkpoint, using default (small, swiglu)")
-    #     model_conf = default_model_conf
+    ckpt = torch.load(checkpoint, weights_only=False, map_location='cpu')
+    default_model_conf = {
+        "num_features": 13,
+        "model_embed_dim": 256,
+        "layers": 6,
+        "heads": 4,
+        "projection_dim": 4096,
+        "hidden_dim": 1024,
+        "d_ff": 1024,
+        "layertype": "swiglu"
+    }
+    if 'model_conf' in ckpt['hyper_parameters']:
+        logger.info("Found model_conf in checkpoint, using it")
+        model_conf = ckpt['hyper_parameters']['model_conf'] # Backbone params
+    else:
+        logger.warning("No model_conf found in checkpoint, using default (small, swiglu)")
+        model_conf = default_model_conf
     
     
-    model = load_model_from_pl_checkpoint(checkpoint, device=device)
-    model.eval()
+
     model.to(device)
     
     testdata = TubeData(test_labels, data_root=dataroot, labelkey=labelkey, 
