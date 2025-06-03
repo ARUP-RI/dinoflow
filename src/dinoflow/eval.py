@@ -180,8 +180,8 @@ def load_featmeans_stds(conf, tube_type):
 def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor=1):
     torch.set_float32_matmul_precision('medium')
 
-
     # Repeat rows in positive samples to balance the dataset
+    
     if positive_repeat_factor > 1:
         train_labels = pd.read_csv(train_labels)
         positive_rows = train_labels[train_labels[labelkey] == 1]
@@ -205,6 +205,8 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     checkpoint_monitor_mode = model.checkpoint_mode
     comet_project = model.comet_project
 
+
+    
     traindata = TubeData(train_labels, tubes_to_return=tubes, events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=train_transforms)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=8)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
@@ -229,7 +231,6 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
         logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
         logger.info(f"Negative samples: {len(valdata.positive_negative_samples()[1])}")
         #assert len(valdata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
-
 
     print(f"comet_workspace: {comet_workspace}, comet_project: {comet_project}, run_name: {run_name}")
     
@@ -344,25 +345,30 @@ def train(run_name, train_labels, test_labels,
     
 
 @app.command()
-def train3tubes(b_ckpt, t_ckpt, m_ckpt, 
-                train_labels, test_labels,
-                run_name,
-                labelkey: str = "label",
-                dataroot: str = ".",
-                events: int = 4096,
-                batch_size: int = 16,
-                epochs: int = 50,
-                freeze_backbone_layers: int = 0,
-                max_lr: float = 0.0001,
-                mode:str = 'binary',
+def train3tubes(run_name, train_labels, test_labels,
+                backbone_b: str, 
+                backbone_t: str, 
+                backbone_m: str,
+                conf: str,
+                dataroot: str = "/",
                 positive_repeat_factor: int = 1,
-                num_classes: int = 2):
+                labelkey: str = "label",
+                freeze_backbone: bool = False,
+                freeze_backbone_layers: int = 0,
+                batch_size: int = 16,
+                events: int = 4096,
+                epochs: int = 50,
+                mode: str = 'binary',
+                num_classes: int = 1,
+                max_lr: float = 0.0001,
+                comet_workspace: str = None,
+                comet_project: str = None,):
     # Helps with too many open files errors?
     torch.multiprocessing.set_sharing_strategy('file_system')
 
-    b_backbone, modelconf = load_checkpoint(b_ckpt)
-    t_backbone, _ = load_checkpoint(t_ckpt)
-    m_backbone, _ = load_checkpoint(m_ckpt)
+    b_backbone, modelconf = load_checkpoint(backbone_b)
+    t_backbone, _ = load_checkpoint(backbone_t)
+    m_backbone, _ = load_checkpoint(backbone_m)
 
 
     output_classes = 1 if mode == 'binary' or mode == 'regression' else num_classes
@@ -381,30 +387,49 @@ def train3tubes(b_ckpt, t_ckpt, m_ckpt,
     btm.t_backbone = t_backbone
     btm.m_backbone = m_backbone
 
-    if freeze_backbone_layers > 0:
-        logger.info(f"Freezing backbone layers: {freeze_backbone_layers}")
-        for i in range(freeze_backbone_layers):
-            btm.b_backbone.encoder.layers[i].eval()
-            for p in btm.b_backbone.encoder.layers[i].parameters():
-                p.requires_grad = False
-            btm.t_backbone.encoder.layers[i].eval()
-            for p in btm.t_backbone.encoder.layers[i].parameters():
-                p.requires_grad = False
-            btm.m_backbone.encoder.layers[i].eval()
-            for p in btm.m_backbone.encoder.layers[i].parameters():
-                p.requires_grad = False
-
 
     if mode == 'binary':
-        model = BinaryClassificationModel(btm, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr)
+        model = BinaryClassificationModel(btm, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
     elif mode == 'multiclass':
-        model = ClassificationModel(btm, num_classes=num_classes, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr)
+        model = ClassificationModel(btm, num_classes=num_classes, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
     elif mode == 'regression':
-        model = RegressionModel(btm, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr)
+        model = RegressionModel(btm, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
     else:
         raise ValueError(f"Unknown mode: {mode}")
-
-    _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, labelkey, dataroot, events, batch_size, epochs, positive_repeat_factor)
+    
+    if freeze_backbone_layers > 0 and not freeze_backbone:
+        raise ValueError("freeze_backbone_layers > 0 requires freeze_backbone to be True")
+    if freeze_backbone:
+        if freeze_backbone_layers > 0:
+            logger.info(f"Freezing backbone layers: {freeze_backbone_layers}")
+            for i in range(freeze_backbone_layers):
+                btm.b_backbone.encoder.layers[i].eval()
+                for p in btm.b_backbone.encoder.layers[i].parameters():
+                    p.requires_grad = False
+                btm.t_backbone.encoder.layers[i].eval()
+                for p in btm.t_backbone.encoder.layers[i].parameters():
+                    p.requires_grad = False
+                btm.m_backbone.encoder.layers[i].eval()
+                for p in btm.m_backbone.encoder.layers[i].parameters():
+                    p.requires_grad = False
+        else:
+            logger.info("Freezing full backbone")
+            btm.b_backbone.eval()
+            for p in btm.b_backbone.parameters():
+                p.requires_grad = False
+            btm.t_backbone.eval()
+            for p in btm.t_backbone.parameters():
+                p.requires_grad = False
+            btm.m_backbone.eval()
+            for p in btm.m_backbone.parameters():
+                p.requires_grad = False
+    else:
+        logger.info("Unfreezing backbone")
+        b_backbone.train()
+        t_backbone.train()
+        m_backbone.train()
+   
+    _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
     
     
 
