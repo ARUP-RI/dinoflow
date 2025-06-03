@@ -110,6 +110,9 @@ class BinaryClassificationModel(pl.LightningModule):
         best_precision = float("NaN")
         threshold = float("NaN")
         best_recall = float("NaN")
+        fpr_thresholds = [0.05, 0.02, 0.01]
+        recall_at_fprs = []
+        
         # Only create and log the plot on the main process
         if self.trainer.is_global_zero and isinstance(self.logger, CometLogger):
            
@@ -134,7 +137,19 @@ class BinaryClassificationModel(pl.LightningModule):
             # Create Precision-Recall curve
             precision_vals, recall_vals, thresholds = precision_recall_curve(gathered_labels.cpu().numpy(), gathered_preds.cpu().numpy())
             avg_precision = average_precision_score(gathered_labels.cpu().numpy(), gathered_preds.cpu().numpy())
-            
+        
+            # --- Sensitivity at fixed precision values --
+            for fpr_threshold in fpr_thresholds:
+                # Find all recall values where precision >= target_prec
+                valid = np.where(fpr <= fpr_threshold)[0]
+                if len(valid) > 0:
+                    # Take the maximum recall at this precision
+                    tpr_val = np.max(tpr[valid])
+                    recall_at_fprs.append(tpr_val)
+                else:
+                    recall_at_fprs.append(0.0)
+        
+
             # Find threshold that maximizes F1 score
             f1_scores = 2 * precision_vals * recall_vals / (precision_vals + recall_vals)
             max_f1_idx = np.argmax(f1_scores)
@@ -163,6 +178,8 @@ class BinaryClassificationModel(pl.LightningModule):
         self.log('fscore', best_f1)
         self.log('threshold', threshold)
         self.log('precision', best_precision)
+        for fpr, recall in zip(fpr_thresholds, recall_at_fprs):
+            self.log(f'recall_at_fpr_{fpr}', recall)
 
         # Log the Area Under Precision-Recall Curve (AUPRC)
         # This is the same as average precision score
@@ -171,6 +188,7 @@ class BinaryClassificationModel(pl.LightningModule):
         else:
             self.log('auprc', float("NaN"))
 
+        
         # Process syncing is handled by lightning for these, and we want sync_dist=True to make sure things are synced across processes 
         self.log('accuracy', accuracy, sync_dist=True)
         self.log('val_loss', self.validation_loss_mean.compute(), sync_dist=True)
