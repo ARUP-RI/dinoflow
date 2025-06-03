@@ -6,23 +6,33 @@ readme = "README.md"
 authors = [
     { name = "O'Fallon, Brendan", email = "brendan.o'fallon@aruplab.com" }
 ]
-requires-python = "==3.9.*"
+requires-python = "==3.12.*"
 dependencies = [
     "comet-ml>=3.49.0",
-    "ipykernel>=6.29.5",
-    "jax[cuda12]>=0.4.30",
-    "matplotlib>=3.9.4",
+    "ipython>=8.18.1",
     "numpy>=2.0",
     "pandas>=2.2.3",
+    "scikit-learn",
+    "scipy",
+    "matplotlib>=3.9.4",
     "pytorch-lightning>=2.5.0.post0",
     "pyyaml>=6.0.2",
     "rich>=13.9.4",
-    "scikit-image>=0.24.0",
-    "seaborn>=0.13.2",
-    "torch>=2.7.0",
+    "torch>=2.6.0",
     "torchmetrics>=1.6.1",
     "typer",
-    "umap-learn",
+]
+
+[project.optional-dependencies]
+som = [
+    "jax[cuda12]>=0.5",
+    "scikit-image>=0.24.0",
+]
+eval = [
+    "ipykernel>=6.29.5",
+    "altair>=5.5.0",
+    "seaborn>=0.13.2",
+    "umap-learn>=0.5.7", 
 ]
 
 [project.scripts]

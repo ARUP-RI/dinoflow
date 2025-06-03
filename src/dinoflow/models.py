@@ -140,14 +140,18 @@ class TubeEncoder(nn.Module):
         self.cls_token = nn.Parameter(torch.zeros(1, 1, model_embed_dim))
         nn.init.xavier_normal_(self.cls_token)
 
-    def forward(self, x):
+    def forward(self, x, use_cls_token=True):
         x = self.fc(x)
 
-        cls_tokens = self.cls_token.expand(x.shape[0], -1, -1)
-        x = torch.cat((cls_tokens, x), dim=1)
+        if use_cls_token:
+            cls_tokens = self.cls_token.expand(x.shape[0], -1, -1)
+            x = torch.cat((cls_tokens, x), dim=1)
 
         x = self.encoder(x)
-        return x[:, 0, :] # Just the cls token
+        if use_cls_token:
+            return x[:, 0, :] # Just the cls token
+        else:
+            return x
 
 
 class ProjectionHead(nn.Module):
@@ -315,6 +319,30 @@ class IlseBagModel(nn.Module):
         return x
     
 
+
+class IlseBagModelWithProjection(nn.Module):
+
+    def __init__(self, num_features, model_embed_dim, output_classes=1, proto_dim=256, bag_classes=1, hidden_dim=1024, projection_dim=4096):
+        super().__init__()
+        self.model_conf = {
+            'num_features': num_features,
+            'model_embed_dim': model_embed_dim,
+            'output_classes': output_classes,
+            'proto_dim': proto_dim,
+            'bag_classes': bag_classes
+        }
+        self.instance_encoder = MLP(num_features, model_embed_dim, model_embed_dim, n_layers=2, residual=False)
+        self.mil_attn = IlseBagEncoder(model_embed_dim, proto_dim, bag_classes)
+        # self.output_head = MLP(model_embed_dim * bag_classes, 128, output_classes, n_layers=2, residual=False)
+        self.projection_head = ProjectionHead(model_embed_dim, hidden_dim, projection_dim)
+        
+    def forward(self, x):
+        x = self.instance_encoder(x)
+        x, attn = self.mil_attn(x)
+        x = self.projection_head(x)
+        return x
+        
+
 class Ilse3TubeModel(nn.Module):
 
     def __init__(self, num_features, model_embed_dim, output_classes=1, proto_dim=256, bag_classes=1):
@@ -347,14 +375,30 @@ class Ilse3TubeModel(nn.Module):
         return x
     
 
+class EncoderWithIlseMIL(nn.Module):
+    def __init__(self, num_features, model_embed_dim, layers, heads, d_ff, output_classes=1, proto_dim=256, bag_classes=1):
+        super().__init__()
+        self.model_conf = {
+            'num_features': num_features,
+            'model_embed_dim': model_embed_dim,
+            'layers': layers,
+            'heads': heads,
+            'd_ff': d_ff,
+            'layertype': 'swiglu',
+        }
+        self.encoder = TubeEncoder(num_features, model_embed_dim, layers, heads, d_ff, layer_type='swiglu')
+        self.mil_attn = IlseBagEncoder(model_embed_dim, proto_dim, bag_classes)
+        self.output_head = MLP(model_embed_dim * bag_classes, 128, output_classes, n_layers=2, residual=False)
+        
+    def forward(self, x):
+        x = self.encoder(x, use_cls_token=False)
+        x, attn = self.mil_attn(x)
+        x = self.output_head(x.flatten(start_dim=1))
+        return x
+
 
 if __name__=="__main__":
-    m = Ilse3TubeModel(13, model_embed_dim=128, output_classes=1, proto_dim=256, bag_classes=4)
-    eventdict = {
-        'b': torch.randn(32, 10, 13),
-        't': torch.randn(32, 10, 13),
-        'm': torch.randn(32, 10, 13)
-    }
-
-    y = m(eventdict)
+    t = EncoderWithIlseMIL(13, model_embed_dim=128, layers=4, heads=2, d_ff=2048, output_classes=1, proto_dim=256, bag_classes=1)
+    x = torch.randn(32, 10, 13)
+    y = t(x)
     print(y.shape)

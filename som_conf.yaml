@@ -1,55 +1,16 @@
 
 data:
   data_dir: /data2/brendan/flow/pretrain_flowtubes
-  input_events: 8192
+  input_events: 4096
 
 
-model:
-  num_features: 13
-  model_dim: 512
-  layers: 10
-  heads: 4
-  projection_dim: 4096
-  hidden_dim: 1024
-  d_ff: 2048
-  layer_type: "swiglu"  # "swiglu" or "normal"
-
-  # IlseBagModel only
-  proto_dim: 256
-  bag_classes: 1
-
-
-training:
-  batch_size: 128
-  min_lr: 0.0000001
-  max_lr: 0.00005
-  warmup_iters: 5000
-  lr_decay_iters: 100000
-  epochs: 100
-  checkpoint_freq: 10
-  center_momentum: 0.99
-  teacher_momentum: 0.999
-  teacher_events: 4096
-
-  koleo_loss_weight_start: 0.0
-  koleo_loss_weight_end: 0.01
-  koleo_loss_weight_steps: 2000
-
-  temperature_start: 0.05
-  temperature_end: 0.1
-  temperature_steps: 5000
-
-  n_student_events: 512
-  n_student_reps: 2
-
-  transforms:
-    scale_prob: 0.5
-    scale_range: 0.4
-    shift_prob: 0.5
-    shift_range: 0.4
-    noise_prob: 0.75
-    noise_range: 0.75
-
+som:
+  size: 32
+  n_features: 13
+  n_epoch: 100
+  batch_size: 32
+  sigma: 2.0
+  alpha: 5.0
 
 
 
