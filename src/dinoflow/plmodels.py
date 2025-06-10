@@ -120,15 +120,13 @@ class BinaryClassificationModel(pl.LightningModule):
             roc_auc = auc(fpr, tpr)
 
             # Compute sensitivity at each fpr threshold
-            
             for i, fpr_threshold in enumerate(fpr_thresholds):
-                sensitivity = np.where(tpr[fpr <= fpr_threshold])[0]
+                idx = fpr <= fpr_threshold
+                sensitivity = tpr[idx]
                 if len(sensitivity) > 0:
                     sensitivities[i] = max(sensitivity)
                 else:
                     sensitivities[i] = 0
-
-            print(sensitivities)
             
             fig, ax = plt.subplots(figsize=(10, 8))
             ax.plot(fpr, tpr, label=f'ROC curve (AUC = {roc_auc:.3f})')
