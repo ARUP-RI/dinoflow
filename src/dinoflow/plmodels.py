@@ -26,6 +26,9 @@ class BinaryClassificationModel(pl.LightningModule):
         self.validation_loss_mean = MeanMetric()
         self.emit_predictions = emit_predictions
         self.comet_project_name = comet_project_name
+        # These are the thresholds at which we compute the sensitivity
+        # Probably best not to change them
+        self.fpr_thresholds = [0.01, 0.02, 0.05]
         if ckpt_params is None:
             ckpt_params = {}
         ckpt_params['model_class'] = self.__class__.__name__
@@ -111,8 +114,8 @@ class BinaryClassificationModel(pl.LightningModule):
         threshold = float("NaN")
         best_recall = float("NaN")
 
-        fpr_thresholds = [0.01, 0.02, 0.05]
-        sensitivities = np.zeros(len(fpr_thresholds))
+        
+        sensitivities = np.zeros(len(self.fpr_thresholds))
         # Only create and log the plot on the main process
         if self.trainer.is_global_zero and isinstance(self.logger, CometLogger):
            
@@ -120,7 +123,7 @@ class BinaryClassificationModel(pl.LightningModule):
             roc_auc = auc(fpr, tpr)
 
             # Compute sensitivity at each fpr threshold
-            for i, fpr_threshold in enumerate(fpr_thresholds):
+            for i, fpr_threshold in enumerate(self.fpr_thresholds):
                 idx = fpr <= fpr_threshold
                 sensitivity = tpr[idx]
                 if len(sensitivity) > 0:
@@ -175,7 +178,7 @@ class BinaryClassificationModel(pl.LightningModule):
         self.log('fscore', best_f1)
         self.log('threshold', threshold)
         self.log('precision', best_precision)
-        for sens, fpr_threshold in zip(sensitivities, fpr_thresholds):
+        for sens, fpr_threshold in zip(sensitivities, self.fpr_thresholds):
             self.log(f'recall_at_fpr_{fpr_threshold}', sens)
 
         # Log the Area Under Precision-Recall Curve (AUPRC)
