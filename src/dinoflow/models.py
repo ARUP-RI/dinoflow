@@ -206,7 +206,7 @@ class BTMTubes(nn.Module):
     """
     Combines the B, T, and M backbones and generates a final prediction
     """
-    def __init__(self, num_features, model_embed_dim, backbone_heads, backbone_layers, output_classes, d_ff=2048, include_classifier=True, layer_type='normal', output_scale_factor=1.0):
+    def __init__(self, num_features, model_embed_dim, backbone_heads, backbone_layers, output_classes, d_ff=2048, include_classifier=True, layer_type='swiglu', output_scale_factor=1.0, dropout=0.1):
         super().__init__()
         self.model_conf = {
             'num_features': num_features,

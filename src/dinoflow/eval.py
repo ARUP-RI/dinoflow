@@ -192,9 +192,9 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
         logger.info(f"New positive samples: {len(train_labels[train_labels[labelkey] == 1])}")
 
     train_transforms = compose([
-        partial(shift, scale=0.5),
-        partial(scale, scale=0.5),
-        partial(noise, scale=2.0),
+        partial(shift, prob=0.5, scale=0.5),
+        partial(scale, prob=0.5, scale=0.5),
+        partial(noise, prob=0.5, scale=2.0),
     ])
 
     val_transforms = compose([
@@ -203,9 +203,6 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     # Use the model's specified checkpoint monitor values instead of hardcoding them
     checkpoint_monitor_val = model.checkpoint_monitor.strip()
     checkpoint_monitor_mode = model.checkpoint_mode
-    comet_project = model.comet_project
-
-
     
     traindata = TubeData(train_labels, tubes_to_return=tubes, events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=train_transforms)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=8)
@@ -237,7 +234,7 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     comet_logger = CometLogger(
             workspace=comet_workspace if comet_workspace is not None else "r-i",  # Optional
             save_dir="dinoflow_classifier_runs",  # Optional 
-            project_name=comet_project if comet_workspace is not None else "no-name-project",  # Optional
+            project_name=comet_project if comet_project is not None else "no-name-project",  # Optional
             experiment_name=run_name,  # Optional
         )
 
@@ -349,7 +346,6 @@ def train3tubes(run_name, train_labels, test_labels,
                 backbone_b: str, 
                 backbone_t: str, 
                 backbone_m: str,
-                conf: str,
                 dataroot: str = "/",
                 positive_repeat_factor: int = 1,
                 labelkey: str = "label",
@@ -381,6 +377,9 @@ def train3tubes(run_name, train_labels, test_labels,
                     backbone_heads=modelconf['heads'],
                     backbone_layers=modelconf['layers'],
                     output_classes=output_classes,
+                    d_ff=modelconf['d_ff'],
+                    layer_type=modelconf['layer_type'],
+                    dropout=0.0,
                     output_scale_factor=output_scale_factor,)
 
     btm.b_backbone = b_backbone
@@ -670,7 +669,9 @@ def train_abmil3tube(train_csv: str,
                        max_lr: float = 0.0002,
                        num_classes: int = 2,
                        events: int = 8192,
-                       positive_repeat_factor: int = 1):
+                       positive_repeat_factor: int = 1,
+                       comet_workspace: str = None,
+                       comet_project: str = None):
     from dinoflow.models import Ilse3TubeModel
     torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -679,15 +680,15 @@ def train_abmil3tube(train_csv: str,
     model = model.to(DEVICE)
 
     if mode == 'binary':
-        model = BinaryClassificationModel(model, emit_predictions=False, max_lr=max_lr)
+        model = BinaryClassificationModel(model, emit_predictions=True, max_lr=max_lr)
     elif mode == 'multiclass':
         model = ClassificationModel(model, num_classes=num_classes, emit_predictions=False, max_lr=max_lr)
     elif mode == 'regression':
-        model = RegressionModel(model, emit_predictions=False, max_lr=max_lr)
+        model = RegressionModel(model, emit_predictions=True, max_lr=max_lr)
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
-    _run_trainer(model, train_csv, test_csv, ["b", "t", "m"], run_name, label_key, dataroot, events, batch_size, epochs, positive_repeat_factor)
+    _run_trainer(model, train_csv, test_csv, ["b", "t", "m"], run_name, label_key, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
 
 
 @app.command()

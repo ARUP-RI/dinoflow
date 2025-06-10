@@ -26,6 +26,9 @@ class BinaryClassificationModel(pl.LightningModule):
         self.validation_loss_mean = MeanMetric()
         self.emit_predictions = emit_predictions
         self.comet_project_name = comet_project_name
+        # These are the thresholds at which we compute the sensitivity
+        # Probably best not to change them
+        self.fpr_thresholds = [0.01, 0.02, 0.05]
         if ckpt_params is None:
             ckpt_params = {}
         ckpt_params['model_class'] = self.__class__.__name__
@@ -110,11 +113,23 @@ class BinaryClassificationModel(pl.LightningModule):
         best_precision = float("NaN")
         threshold = float("NaN")
         best_recall = float("NaN")
+
+        
+        sensitivities = np.zeros(len(self.fpr_thresholds))
         # Only create and log the plot on the main process
         if self.trainer.is_global_zero and isinstance(self.logger, CometLogger):
            
-            fpr, tpr, _ = roc_curve(gathered_labels.cpu().numpy(), gathered_preds.cpu().numpy())
+            fpr, tpr, thresholds = roc_curve(gathered_labels.cpu().numpy(), gathered_preds.cpu().numpy())
             roc_auc = auc(fpr, tpr)
+
+            # Compute sensitivity at each fpr threshold
+            for i, fpr_threshold in enumerate(self.fpr_thresholds):
+                idx = fpr <= fpr_threshold
+                sensitivity = tpr[idx]
+                if len(sensitivity) > 0:
+                    sensitivities[i] = max(sensitivity)
+                else:
+                    sensitivities[i] = 0
             
             fig, ax = plt.subplots(figsize=(10, 8))
             ax.plot(fpr, tpr, label=f'ROC curve (AUC = {roc_auc:.3f})')
@@ -163,6 +178,8 @@ class BinaryClassificationModel(pl.LightningModule):
         self.log('fscore', best_f1)
         self.log('threshold', threshold)
         self.log('precision', best_precision)
+        for sens, fpr_threshold in zip(sensitivities, self.fpr_thresholds):
+            self.log(f'recall_at_fpr_{fpr_threshold}', sens)
 
         # Log the Area Under Precision-Recall Curve (AUPRC)
         # This is the same as average precision score
