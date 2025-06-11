@@ -10,7 +10,7 @@ export TORCH_NCCL_TRACE_BUFFER_SIZE=1 # This is for debugging NCCL issues
 
 # Produces a single unified model from checkpoints/backbones for each of the three tubes 
 
-python src/dinoflow/eval.py train3tubes \
+uv run src/dinoflow/eval.py train3tubes \
     /home/22319/data/brendan/dinoflow/checkpoints/b_p4k_fix_koleo/b_p4k_fix_koleo_epoch99.pt \
     /home/22319/data/brendan/dinoflow/checkpoints/t_p4k_fix_koleo/t_p4k_fix_koleo_epoch99.pt \
     /home/22319/data/brendan/dinoflow/checkpoints/m_p4k_fix_koleo/m_p4k_fix_koleo_epoch99.pt \
