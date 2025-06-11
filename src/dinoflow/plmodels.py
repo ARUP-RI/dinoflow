@@ -180,7 +180,7 @@ class BinaryClassificationModel(pl.LightningModule):
         self.accuracy.reset()
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.001, weight_decay=0.001)
         lrschedule = util.WarmupCosineLRScheduler(optimizer, self.max_lr, self.min_lr, self.warmup_iters, self.lr_decay_iters)
         return [optimizer], [lrschedule]
 
