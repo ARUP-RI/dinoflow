@@ -228,8 +228,6 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
         logger.info(f"Positive samples: {len(valdata.positive_negative_samples()[0])}")
         logger.info(f"Negative samples: {len(valdata.positive_negative_samples()[1])}")
         #assert len(valdata.positive_negative_samples()[0]) > 0, f"No positive samples found :("
-
-    print(f"comet_workspace: {comet_workspace}, comet_project: {comet_project}, run_name: {run_name}")
     
     comet_logger = CometLogger(
             workspace=comet_workspace if comet_workspace is not None else "r-i",  # Optional

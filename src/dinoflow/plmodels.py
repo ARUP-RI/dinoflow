@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 from pytorch_lightning.loggers import CometLogger
 from dinoflow import util
 
-
 class BinaryClassificationModel(pl.LightningModule):
     def __init__(self, model, min_lr=0.00001, max_lr=0.00025, warmup_iters=10, lr_decay_iters=80, emit_predictions=False, ckpt_params=None, num_classes=1, comet_project_name=None):
         super().__init__()
@@ -197,7 +196,7 @@ class BinaryClassificationModel(pl.LightningModule):
         self.accuracy.reset()
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.001, weight_decay=0.001)
         lrschedule = util.WarmupCosineLRScheduler(optimizer, self.max_lr, self.min_lr, self.warmup_iters, self.lr_decay_iters)
         return [optimizer], [lrschedule]
 
