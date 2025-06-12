@@ -36,9 +36,9 @@ uv run src/dinoflow/eval.py train3tubes \
     --events 4096 \
     --batch-size 32 \
     --epochs 25 \
-    --comet-workspace "brendan" \
-    --comet-project "dinoflow-normal" \
-    --freeze-backbone \
-    --freeze-backbone-layers 2 \
+    --comet-workspace "r-i" \
+    --comet-project "test-dino" \
+    # --freeze-backbone \
+    # --freeze-backbone-layers 2 \
 
 

@@ -26,6 +26,7 @@ class BinaryClassificationModel(pl.LightningModule):
         self.validation_loss_mean = MeanMetric()
         self.emit_predictions = emit_predictions
         self.comet_project_name = comet_project_name
+        self.bce_loss_alpha = 0.01
         # These are the thresholds at which we compute the sensitivity
         # Probably best not to change them
         self.fpr_thresholds = [0.01, 0.02, 0.05]
@@ -51,7 +52,7 @@ class BinaryClassificationModel(pl.LightningModule):
         x, rowinfo = batch
         labels = rowinfo['label']
         preds = self(x)
-        loss = WeightedBCELoss(alpha=0.01)(preds.squeeze(1), labels.float())
+        loss = WeightedBCELoss(alpha=self.bce_loss_alpha)(preds.squeeze(1), labels.float())
         #loss = torch.nn.functional.binary_cross_entropy_with_logits(preds.squeeze(1), labels.float())
         self.training_loss_mean.update(loss)
         return loss
@@ -72,7 +73,8 @@ class BinaryClassificationModel(pl.LightningModule):
         logits = self(x)
         preds = torch.sigmoid(logits.squeeze(1))
         
-        loss = torch.nn.functional.binary_cross_entropy_with_logits(logits.squeeze(1), labels.float())
+        #loss = torch.nn.functional.binary_cross_entropy_with_logits(logits.squeeze(1), labels.float())
+        loss = WeightedBCELoss(alpha=self.bce_loss_alpha)(logits.squeeze(1), labels.float())
         
         # Store predictions and labels for later use
         self.val_preds.append(preds.detach().float())
