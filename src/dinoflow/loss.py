@@ -13,31 +13,6 @@ import torch.nn.functional as F
 logger = logging.getLogger(__name__)
 
 
-class WeightedBCELoss(nn.Module):
-    def __init__(self, alpha: float = 0.5):
-        """
-        alpha: weight for the positive class.
-        A smaller alpha (e.g., 0.01) increases the penalty on false positives.
-        """
-        super(WeightedBCELoss, self).__init__()
-        self.alpha = alpha
-
-    def forward(self, logits, targets):
-        """
-        logits: raw outputs from the model (before sigmoid)
-        targets: ground truth labels (0 or 1)
-        """
-        # Apply sigmoid to logits to get probabilities
-        probs = torch.sigmoid(logits)
-
-        # Compute the loss manually
-        loss_pos = -self.alpha * targets * torch.log(probs + 1e-8)
-        loss_neg = -(1 - self.alpha) * (1 - targets) * torch.log(1 - probs + 1e-8)
-
-        loss = loss_pos + loss_neg
-        return loss.mean()
-
-
 class WeightedCategoricalCrossentropy(nn.Module):
     """
     Weighted version of cross entropy

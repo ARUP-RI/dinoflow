@@ -10,7 +10,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pytorch_lightning.loggers import CometLogger
 from dinoflow import util
-from dinoflow.loss import WeightedBCELoss
 
 class BinaryClassificationModel(pl.LightningModule):
     def __init__(self, model, min_lr=0.00001, max_lr=0.00025, warmup_iters=10, lr_decay_iters=80, emit_predictions=False, ckpt_params=None, num_classes=1, comet_project_name=None):
@@ -52,8 +51,7 @@ class BinaryClassificationModel(pl.LightningModule):
         x, rowinfo = batch
         labels = rowinfo['label']
         preds = self(x)
-        loss = WeightedBCELoss(alpha=self.bce_loss_alpha)(preds.squeeze(1), labels.float())
-        #loss = torch.nn.functional.binary_cross_entropy_with_logits(preds.squeeze(1), labels.float())
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(preds.squeeze(1), labels.float())
         self.training_loss_mean.update(loss)
         return loss
     
@@ -73,8 +71,7 @@ class BinaryClassificationModel(pl.LightningModule):
         logits = self(x)
         preds = torch.sigmoid(logits.squeeze(1))
         
-        #loss = torch.nn.functional.binary_cross_entropy_with_logits(logits.squeeze(1), labels.float())
-        loss = WeightedBCELoss(alpha=self.bce_loss_alpha)(logits.squeeze(1), labels.float())
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(logits.squeeze(1), labels.float())
         
         # Store predictions and labels for later use
         self.val_preds.append(preds.detach().float())
