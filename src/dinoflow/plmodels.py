@@ -25,7 +25,6 @@ class BinaryClassificationModel(pl.LightningModule):
         self.validation_loss_mean = MeanMetric()
         self.emit_predictions = emit_predictions
         self.comet_project_name = comet_project_name
-        self.bce_loss_alpha = 0.01
         # These are the thresholds at which we compute the sensitivity
         # Probably best not to change them
         self.fpr_thresholds = [0.01, 0.02, 0.05]

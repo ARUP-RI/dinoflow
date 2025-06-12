@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-export CUDA_VISIBLE_DEVICES=4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 
 export OMP_NUM_THREADS=8
@@ -33,7 +33,7 @@ uv run src/dinoflow/eval.py train3tubes \
     --labelkey 'NORMAL' \
     --mode 'binary' \
     --dataroot /data2/brendan/flow/ \
-    --events 4096 \
+    --events 8192 \
     --batch-size 32 \
     --epochs 25 \
     --comet-workspace "r-i" \
