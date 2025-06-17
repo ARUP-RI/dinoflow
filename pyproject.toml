@@ -21,6 +21,7 @@ dependencies = [
     "torch>=2.6.0",
     "torchmetrics>=1.6.1",
     "typer",
+    "torch-geometric>=2.6.1",
 ]
 
 [project.optional-dependencies]
@@ -34,10 +35,16 @@ eval = [
     "seaborn>=0.13.2",
     "umap-learn>=0.5.7", 
 ]
+geometric = [
+    "torch-cluster @ https://data.pyg.org/whl/torch-2.7.0+cu128/torch_cluster-1.6.3%2Bpt27cu128-cp312-cp312-linux_x86_64.whl",
+]
 
 [project.scripts]
 dinoflow = "dinoflow:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "torch>=2.6.0", "setuptools>=68.0.0"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true

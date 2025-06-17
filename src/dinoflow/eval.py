@@ -86,7 +86,7 @@ def load_model_from_pl_checkpoint(checkpoint: str, device=None):
             bag_classes=model_conf['bag_classes'],
         )
     elif hparams.get('backbone_class') == 'DeepCyTof':
-        from dinoflow.cnnmodel import DeepCyTof
+        from dinoflow.compmodels.cnnmodel import DeepCyTof
         model = DeepCyTof(
             input_channels=model_conf['input_channels'],
             num_features=model_conf['num_features'],
@@ -131,7 +131,10 @@ class CombinedModel(nn.Module):
 
     def __init__(self, backbone, classifier, freeze_backbone=False):
         super().__init__()
-        self.model_conf = backbone.model_conf
+        if hasattr(backbone, 'model_conf'):
+            self.model_conf = backbone.model_conf
+        else:
+            self.model_conf = {"backbone_cls": backbone.__class__.__name__}
         self.freeze_backbone = freeze_backbone
         if hasattr(classifier, 'output_scale_factor'):
             self.model_conf['output_scale_factor'] = classifier.output_scale_factor
@@ -598,7 +601,7 @@ def train_deepcytof(train_csv: str,
                        num_classes: int = 2,
                        events: int = 8192,
                        positive_repeat_factor: int = 1):
-    from dinoflow.cnnmodel import DeepCyTof
+    from dinoflow.compmodels.cnnmodel import DeepCyTof
     torch.multiprocessing.set_sharing_strategy('file_system')
     
     if "," in tube_type:
@@ -687,6 +690,47 @@ def train_abmil3tube(train_csv: str,
         raise ValueError(f"Unknown mode: {mode}")
 
     _run_trainer(model, train_csv, test_csv, ["b", "t", "m"], run_name, label_key, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
+
+
+@app.command()
+def train_settransformer(run_name: str,
+                         train_csv: str,
+                         test_csv: str,
+                         tube_type: str = None,
+                         mode: str = 'binary',
+                         dataroot: str = ".",
+                         labelkey: str = "label",
+                         batch_size: int = 16,
+                         epochs: int = 50,
+                         max_lr: float = 0.0002,
+                         num_classes: int = 1,
+                         events: int = 8192,
+                         positive_repeat_factor: int = 1,
+                         comet_workspace: str = None,
+                         comet_project: str = None):
+    
+    from dinoflow.compmodels.transformer_model import SetTransformer, FPSTransformer
+    from dinoflow.compmodels.agg import MeanPool
+    torch.multiprocessing.set_sharing_strategy('file_system')
+    
+    assert mode in ('binary', 'multiclass', 'regression'), f"Unknown mode: {mode}"
+    model = CombinedModel(
+        # backbone=SetTransformer(dim_input=13, dim_hidden=128, num_heads=2, num_inds=128, hidden_layers=3, layer_norm=True, dim_output=128),
+        backbone=FPSTransformer(dim_input=13, dim_hidden=128, num_heads=2, fps_ratio=0.001, layer_norm=True, dim_output=128),
+        classifier=nn.Sequential(MeanPool(), ClassificationHead(128, num_classes=num_classes)),
+    )
+    model = model.to(DEVICE)
+    
+    if mode == 'binary':
+        model = BinaryClassificationModel(model, emit_predictions=True, max_lr=max_lr)
+    elif mode == 'multiclass':
+        model = ClassificationModel(model, num_classes=num_classes, emit_predictions=False, max_lr=max_lr)
+    elif mode == 'regression':
+        model = RegressionModel(model, emit_predictions=True, max_lr=max_lr)
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+    
+    _run_trainer(model, train_csv, test_csv, tube_type, run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
 
 
 @app.command()

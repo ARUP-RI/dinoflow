@@ -379,6 +379,10 @@ class Ilse3TubeModel(nn.Module):
     
 
 class EncoderWithIlseMIL(nn.Module):
+    """
+    Bolts a TubeEncoder to an AB-MIL model so we can do attention over the outputs of a transformer encoder stack
+    Uses a simple MLP classification head
+    """
     def __init__(self, num_features, model_embed_dim, layers, heads, d_ff, output_classes=1, proto_dim=256, bag_classes=1):
         super().__init__()
         self.model_conf = {
