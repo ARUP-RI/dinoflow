@@ -48,6 +48,7 @@ def compute_embeddings(backbone: str,
     # Setup dataset and dataloader
     dataset = TubeData(input_csv, 
                       data_root=dataroot,
+                      labelkey="BONE MARROW", # This is ignored but we must provide a value
                       tubes_to_return=[tube_type],
                       events_to_return=int(events))
     dataloader = DataLoader(dataset, 
@@ -60,7 +61,7 @@ def compute_embeddings(backbone: str,
     with torch.inference_mode():
         for batch_idx, (batch, rowdict) in enumerate(dataloader):
             # Move batch to device
-            batch = batch.to(DEVICE)
+            batch = batch.float().to(DEVICE)
             
             # Get embeddings from backbone
             embeddings = backbone_model(batch)
