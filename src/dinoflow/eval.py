@@ -834,16 +834,5 @@ def predict(checkpoint: str,
                 print(f"{idx},{rowdict['ACCESSION'][i]},{p},{labels[i]}")
                 i += 1
 
-#def compute_embeddings(checkpoint: str,
-#                       samplecsv: str,
-#                       dataroot: str = ".",
-#                       events: int = 4096,
-#                       batch_size: int = 16):
-#    """
-#    Compute the embeddings for the test set
-#    """
-#
-#    model, modelconf = load_model_from_pl_checkpoint
-
 if __name__ == "__main__":
     app()
