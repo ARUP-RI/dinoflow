@@ -63,21 +63,17 @@ def compute_embeddings(backbone: str,
             # Move batch to device
             batch = batch.float().to(DEVICE)
             
-            # Get embeddings from backbone
             embeddings = backbone_model(batch)
             
-            # Save embeddings for each sample in the batch
             for i in range(len(batch)):
                 sample_idx = batch_idx * batch_size + i
                 accession = rowdict['ACCESSION'][i]
                 
-                # Create output dictionary
                 output = {
                     'embeddings': embeddings[i].cpu(),
                     'tube_type': tube_type
                 }
                 
-                # Save as PyTorch tensor
                 output_path = os.path.join(output_dir, f"{accession}_{tube_type}_embeds.pt")
                 torch.save(output, output_path)
                 
