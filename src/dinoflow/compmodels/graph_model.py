@@ -5,8 +5,8 @@ from torch_geometric.nn import fps
 from torch_geometric.nn import GATConv, Sequential, GINConv, GCNConv
 
 
-from src.models.modules import FPSSAB
-from src.models.mlp import MLP
+from dinoflow.compmodels.modules import FPSSAB
+from dinoflow.compmodels.mlp import MLP
 
 
 class GIN(Module):

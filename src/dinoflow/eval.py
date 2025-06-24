@@ -15,6 +15,7 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import CometLogger, CSVLogger
+from pytorch_lightning.strategies import DDPStrategy
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
 from torchmetrics.regression import MeanSquaredError, MeanAbsoluteError, R2Score
@@ -245,6 +246,7 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     trainer = pl.Trainer(max_epochs=epochs,
                         accelerator='auto',
                         precision="bf16-mixed",
+                        strategy=DDPStrategy(find_unused_parameters=True),
                         callbacks=[
                             ModelCheckpoint(dirpath=checkpoint_dir,
                                             monitor=checkpoint_monitor_val, 
@@ -600,7 +602,9 @@ def train_deepcytof(train_csv: str,
                        max_lr: float = 0.0002,
                        num_classes: int = 2,
                        events: int = 8192,
-                       positive_repeat_factor: int = 1):
+                       positive_repeat_factor: int = 1,
+                       comet_workspace: str = None,
+                       comet_project: str = None):
     from dinoflow.compmodels.cnnmodel import DeepCyTof
     torch.multiprocessing.set_sharing_strategy('file_system')
     
@@ -620,7 +624,7 @@ def train_deepcytof(train_csv: str,
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
-    _run_trainer(model, train_csv, test_csv, tube_type, run_name, label_key, dataroot, events, batch_size, epochs, positive_repeat_factor)
+    _run_trainer(model, train_csv, test_csv, tube_type, run_name, label_key, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
    
 @app.command()
 def train_abmil(train_csv: str,
@@ -635,7 +639,9 @@ def train_abmil(train_csv: str,
                        max_lr: float = 0.0002,
                        num_classes: int = 2,
                        events: int = 8192,
-                       positive_repeat_factor: int = 1):
+                       positive_repeat_factor: int = 1,
+                       comet_workspace: str = None,
+                       comet_project: str = None):
     from dinoflow.models import IlseBagModel
     torch.multiprocessing.set_sharing_strategy('file_system')
     
@@ -655,7 +661,7 @@ def train_abmil(train_csv: str,
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
-    _run_trainer(model, train_csv, test_csv, tube_type, run_name, label_key, dataroot, events, batch_size, epochs, positive_repeat_factor)
+    _run_trainer(model, train_csv, test_csv, tube_type, run_name, label_key, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
 
 
 @app.command()
@@ -710,19 +716,74 @@ def train_settransformer(run_name: str,
                          comet_project: str = None):
     
     from dinoflow.compmodels.transformer_model import SetTransformer, FPSTransformer
+    from dinoflow.compmodels.graph_model import GINFPSST
     from dinoflow.compmodels.agg import MeanPool
     torch.multiprocessing.set_sharing_strategy('file_system')
     
     assert mode in ('binary', 'multiclass', 'regression'), f"Unknown mode: {mode}"
     model = CombinedModel(
         # backbone=SetTransformer(dim_input=13, dim_hidden=128, num_heads=2, num_inds=128, hidden_layers=3, layer_norm=True, dim_output=128),
-        backbone=FPSTransformer(dim_input=13, dim_hidden=128, num_heads=2, fps_ratio=0.001, layer_norm=True, dim_output=128),
+        backbone=FPSTransformer(dim_input=13, dim_hidden=128, num_heads=2, fps_ratio=0.01, layer_norm=True, dim_output=128),
+        # backbone=GINFPSST(dim_input=13, dim_hidden=128, num_heads=2, fps_ratio=0.001, layer_norm=True, dim_output=128),
         classifier=nn.Sequential(MeanPool(), ClassificationHead(128, num_classes=num_classes)),
     )
     model = model.to(DEVICE)
     
     if mode == 'binary':
         model = BinaryClassificationModel(model, emit_predictions=True, max_lr=max_lr)
+    elif mode == 'multiclass':
+        model = ClassificationModel(model, num_classes=num_classes, emit_predictions=False, max_lr=max_lr)
+    elif mode == 'regression':
+        model = RegressionModel(model, emit_predictions=True, max_lr=max_lr)
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+    
+    _run_trainer(model, train_csv, test_csv, tube_type, run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
+
+
+@app.command()
+def train_enc_ilse(run_name: str,
+                         train_csv: str,
+                         test_csv: str,
+                         tube_type: str = None,
+                         mode: str = 'binary',
+                         dataroot: str = ".",
+                         checkpoint: str = None,
+                         freeze_backbone: bool = False,
+                         labelkey: str = "label",
+                         batch_size: int = 16,
+                         epochs: int = 50,
+                         max_lr: float = 0.0002,
+                         num_classes: int = 1,
+                         events: int = 8192,
+                         positive_repeat_factor: int = 1,
+                         comet_workspace: str = None,
+                         comet_project: str = None):
+    
+    from dinoflow.models import EncoderWithIlseMIL
+    freeze_encoder_iters = 10
+    
+    model = None
+    if checkpoint is not None:
+        logger.info(f"Loading backbone / encoder checkpoint from: {checkpoint}")
+        backbone, modelconf = load_checkpoint(checkpoint)
+        logger.info(f"Model conf: {modelconf}")
+        model = EncoderWithIlseMIL(13, model_embed_dim=modelconf['model_dim'], layers=modelconf['layers'], heads=modelconf['heads'], d_ff=modelconf['d_ff'], output_classes=1, proto_dim=256, bag_classes=1)
+        model.encoder.load_state_dict(backbone.state_dict())
+        if freeze_backbone:
+            logger.info(f"Freezing backbone layers: {freeze_backbone}")
+            for p in model.encoder.parameters():
+                p.requires_grad = False
+            model.encoder.eval()
+    else:
+        model = EncoderWithIlseMIL(13, model_embed_dim=256, layers=6, heads=4, d_ff=1028, output_classes=1, proto_dim=256, bag_classes=1)
+        if freeze_backbone:
+            raise ValueError("Cannot freeze backbone if no checkpoint is provided")
+    
+    model.to(DEVICE)
+    
+    if mode == 'binary':
+        model = BinaryClassificationModel(model, emit_predictions=True, max_lr=max_lr, freeze_encoder_iters=freeze_encoder_iters)
     elif mode == 'multiclass':
         model = ClassificationModel(model, num_classes=num_classes, emit_predictions=False, max_lr=max_lr)
     elif mode == 'regression':
