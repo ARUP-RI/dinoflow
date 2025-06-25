@@ -129,6 +129,87 @@ def munge_label_df(labelcsv):
     bertp['diagnoses'] = bertp['diagnoses'].astype(str, copy=True)
     return bertp
 
+
+class FreezeEncoderWarmupCosineLRScheduler(LRScheduler):
+    """ A learning rate schedule that freezes encoder/backbone components for freeze_iters,
+    then increases linearly from 0 to max_lr over warmup_iters, then decreases using cosine 
+    decay back down to min_lr for lr_decay_iters, then stays there forever.
+    
+    Encoder/backbone components are identified by parameter names containing 'encoder' or 'backbone'.
+    """
+
+    def __init__(self, optimizer, max_lr, min_lr, warmup_iters, lr_decay_iters, freeze_iters=0):
+        self.optimizer = optimizer
+        self.max_lr = max_lr
+        self.min_lr = min_lr
+        self.warmup_iters = warmup_iters
+        self.lr_decay_iters = lr_decay_iters
+        self.freeze_iters = freeze_iters
+        self.last_lr = float("NaN")
+        
+        # Identify encoder/backbone parameters
+        self.encoder_param_indices = []
+        self.other_param_indices = []
+        
+        for i, param_group in enumerate(optimizer.param_groups):
+            param_name = param_group.get('name', '')
+            if 'encoder' in param_name.lower() or 'backbone' in param_name.lower():
+                self.encoder_param_indices.append(i)
+            else:
+                self.other_param_indices.append(i)
+        
+        super().__init__(optimizer)
+
+    def set_iters(self, iters):
+        self._step_count = iters
+
+    def get_last_lr(self):
+        return self.last_lr
+    
+    def get_lr(self):
+        """
+        Sets different LR for encoder/backbone vs other parameters
+        """
+        lrs = []
+        # PyTorch LRScheduler increments _step_count before get_lr, so use (self._step_count - 1)
+        step = self._step_count - 1
+        for i, param_group in enumerate(self.optimizer.param_groups):
+            if i in self.encoder_param_indices:
+                # For encoder/backbone parameters
+                if step < self.freeze_iters:
+                    # Freeze for first freeze_iters steps
+                    lr = 0.0
+                else:
+                    # After freeze_iters, use normal warmup cosine schedule
+                    # Adjust step count to account for freeze period
+                    adjusted_step = step - self.freeze_iters
+                    if adjusted_step < self.warmup_iters:
+                        lr = self.max_lr/2.5 * (adjusted_step) / (self.warmup_iters)
+                    elif adjusted_step > self.lr_decay_iters:
+                        lr = self.min_lr
+                    else:
+                        decay_ratio = (adjusted_step - self.warmup_iters) / (self.lr_decay_iters - self.warmup_iters)
+                        assert 0 <= decay_ratio <= 1
+                        coeff = 0.5 * (1.0 + np.cos(np.pi * decay_ratio))
+                        lr = self.min_lr + coeff * (self.max_lr/2.5 - self.min_lr)
+            else:
+                # For other parameters, use normal warmup cosine schedule
+                if step < self.warmup_iters:
+                    lr = self.max_lr * (step + 1) / (self.warmup_iters)
+                elif step > self.lr_decay_iters:
+                    lr = self.min_lr
+                else:
+                    decay_ratio = (step - self.warmup_iters) / (self.lr_decay_iters - self.warmup_iters)
+                    assert 0 <= decay_ratio <= 1
+                    coeff = 0.5 * (1.0 + np.cos(np.pi * decay_ratio))
+                    lr = self.min_lr + coeff * (self.max_lr - self.min_lr)
+            
+            lrs.append(lr)
+        
+        self.last_lr = lrs
+        return lrs
+
+
 if __name__=="__main__":
     scheduler = LinearScheduler(0.9, 1, 10)
     for i in range(20):

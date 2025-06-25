@@ -274,7 +274,7 @@ class IlseBagEncoder(nn.Module):
         self.dubya = nn.Linear(proto_dim, classes, bias=False)
         self.proto_dim = proto_dim
 
-    def forward(self, x):
+    def forward(self, x, temperature=1.0):
         """
         Assumes input x is a bag of instances of shape
         [batch size, num inst in bag, embedding dim].
@@ -290,7 +290,7 @@ class IlseBagEncoder(nn.Module):
         # next normalize the attn wts for each bag, but don't squeeze away the
         # bag size dimension until after we mult the attn weights by the bag x
 
-        attn = F.softmax(attn, dim=-2) # attn has shape [batch, event, classes]
+        attn = F.softmax(attn / temperature, dim=-2) # attn has shape [batch, event, classes]
         #attn = F.sigmoid(attn)  # sigmoid, no dim needed
 
         # bag_embeddings have shape: batch size x embedding_dim
@@ -379,6 +379,10 @@ class Ilse3TubeModel(nn.Module):
     
 
 class EncoderWithIlseMIL(nn.Module):
+    """
+    Bolts a TubeEncoder to an AB-MIL model so we can do attention over the outputs of a transformer encoder stack
+    Uses a simple MLP classification head
+    """
     def __init__(self, num_features, model_embed_dim, layers, heads, d_ff, output_classes=1, proto_dim=256, bag_classes=1):
         super().__init__()
         self.model_conf = {
@@ -389,13 +393,13 @@ class EncoderWithIlseMIL(nn.Module):
             'd_ff': d_ff,
             'layertype': 'swiglu',
         }
-        self.encoder = TubeEncoder(num_features, model_embed_dim, layers, heads, d_ff, layer_type='swiglu')
+        self.encoder = TubeEncoder(num_features, model_embed_dim, layers, heads, d_ff, layertype='swiglu')
         self.mil_attn = IlseBagEncoder(model_embed_dim, proto_dim, bag_classes)
         self.output_head = MLP(model_embed_dim * bag_classes, 128, output_classes, n_layers=2, residual=False)
         
     def forward(self, x):
         x = self.encoder(x, use_cls_token=False)
-        x, attn = self.mil_attn(x)
+        x, _ = self.mil_attn(x)
         x = self.output_head(x.flatten(start_dim=1))
         return x
 

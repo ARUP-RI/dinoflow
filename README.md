@@ -26,4 +26,8 @@ Training and val input data are all provided by CSV files, which should contain 
 
 
 
+### Installing torch-cluster
 
+torch-cluster is required to run some of the evaluation models, and cannot be installed automatically with uv. Instead, try this command after installing everything else:
+
+    uv pip install torch-cluster -f https://data.pyg.org/whl/torch-2.7.0+cu128.html

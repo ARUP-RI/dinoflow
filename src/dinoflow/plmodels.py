@@ -12,7 +12,7 @@ from pytorch_lightning.loggers import CometLogger
 from dinoflow import util
 
 class BinaryClassificationModel(pl.LightningModule):
-    def __init__(self, model, min_lr=0.00001, max_lr=0.00025, warmup_iters=10, lr_decay_iters=80, emit_predictions=False, ckpt_params=None, num_classes=1, comet_project_name=None):
+    def __init__(self, model, min_lr=0.00001, max_lr=0.00025, warmup_iters=10, lr_decay_iters=80, emit_predictions=False, ckpt_params=None, num_classes=1, comet_project_name=None, freeze_encoder_iters=0):
         super().__init__()
         assert num_classes==1, "Only one class permitted for binary"
         self.model = model #
@@ -20,12 +20,13 @@ class BinaryClassificationModel(pl.LightningModule):
         self.max_lr = max_lr
         self.warmup_iters = warmup_iters
         self.lr_decay_iters = lr_decay_iters
+        self.freeze_encoder_iters = freeze_encoder_iters
         self.accuracy = BinaryAccuracy()
         self.training_loss_mean = MeanMetric()
         self.validation_loss_mean = MeanMetric()
         self.emit_predictions = emit_predictions
         self.comet_project_name = comet_project_name
-        # These are the thresholds at which we compute the sensitivity
+        # These are the thresholds at which we compute vthe sensitivity
         # Probably best not to change them
         self.fpr_thresholds = [0.01, 0.02, 0.05]
         if ckpt_params is None:
@@ -196,8 +197,40 @@ class BinaryClassificationModel(pl.LightningModule):
         self.accuracy.reset()
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.001, weight_decay=0.001)
-        lrschedule = util.WarmupCosineLRScheduler(optimizer, self.max_lr, self.min_lr, self.warmup_iters, self.lr_decay_iters)
+        # Create parameter groups for encoder/backbone vs other parameters
+        encoder_params = []
+        other_params = []
+        
+        for name, param in self.model.named_parameters():
+            if 'encoder' in name.lower() or 'backbone' in name.lower():
+                encoder_params.append(param)
+            else:
+                other_params.append(param)
+        
+        # Create optimizer with parameter groups
+        param_groups = []
+        if encoder_params:
+            param_groups.append({'params': encoder_params, 'name': 'encoder_backbone'})
+        if other_params:
+            param_groups.append({'params': other_params, 'name': 'other'})
+        
+        # If no parameter groups were created (fallback), use all parameters
+        if not param_groups:
+            param_groups = [{'params': self.model.parameters(), 'name': 'all'}]
+        
+        optimizer = torch.optim.AdamW(param_groups, lr=0.001, weight_decay=0.001)
+        
+        # Choose scheduler based on freeze_encoder_iters
+        if self.freeze_encoder_iters > 0:
+            lrschedule = util.FreezeEncoderWarmupCosineLRScheduler(
+                optimizer, self.max_lr, self.min_lr, self.warmup_iters, 
+                self.lr_decay_iters, self.freeze_encoder_iters
+            )
+        else:
+            lrschedule = util.WarmupCosineLRScheduler(
+                optimizer, self.max_lr, self.min_lr, self.warmup_iters, self.lr_decay_iters
+            )
+        
         return [optimizer], [lrschedule]
 
     # Add these methods to specify checkpoint monitoring preferences
