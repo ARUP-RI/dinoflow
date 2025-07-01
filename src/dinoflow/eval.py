@@ -722,8 +722,8 @@ def train_settransformer(run_name: str,
     
     assert mode in ('binary', 'multiclass', 'regression'), f"Unknown mode: {mode}"
     model = CombinedModel(
-        # backbone=SetTransformer(dim_input=13, dim_hidden=128, num_heads=2, num_inds=128, hidden_layers=3, layer_norm=True, dim_output=128),
-        backbone=FPSTransformer(dim_input=13, dim_hidden=128, num_heads=2, fps_ratio=0.01, layer_norm=True, dim_output=128),
+        backbone=SetTransformer(dim_input=13, dim_hidden=128, num_heads=2, num_inds=128, hidden_layers=3, layer_norm=True, dim_output=128),
+        # backbone=FPSTransformer(dim_input=13, dim_hidden=128, num_heads=2, fps_ratio=0.01, layer_norm=True, dim_output=128),
         # backbone=GINFPSST(dim_input=13, dim_hidden=128, num_heads=2, fps_ratio=0.001, layer_norm=True, dim_output=128),
         classifier=nn.Sequential(MeanPool(), ClassificationHead(128, num_classes=num_classes)),
     )
@@ -838,7 +838,7 @@ def predict_onetube(checkpoint: str,
     logger.info(f"Loaded {len(testloader.dataset)} samples for test")
 
     print("index,accession,prediction,label")
-    with torch.inference_mode():
+    with torch.inference_mode(), torch.amp.autocast(device_type=device):
         sample_start_index = 0
         for b, (batch, rowdict) in enumerate(testloader):
             labels = rowdict['label']

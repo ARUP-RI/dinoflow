@@ -17,8 +17,8 @@ uv run src/dinoflow/eval.py train3tubes \
     /home/22319/data/brendan/dinoflow/checkpoints/b_sml_moreaug/b_sml_moreaug_epoch99.pt \
     /home/22319/data/brendan/dinoflow/checkpoints/t_sml_moreaug/t_sml_moreaug_epoch99.pt \
     /home/22319/data/brendan/dinoflow/checkpoints/m_sml_moreaug/m_sml_moreaug_epoch99.pt \
-    --labelkey 'NORMAL' \
-    --positive-repeat-factor 1 \
+    --labelkey 'TALL' \
+    --positive-repeat-factor 3 \
     --dataroot /data2/brendan/flow/ \
     --freeze-backbone \
     --freeze-backbone-layers 2 \
@@ -27,5 +27,5 @@ uv run src/dinoflow/eval.py train3tubes \
     --batch-size 32 \
     --epochs 50 \
     --comet-workspace brendan \
-    --comet-project dinoflow-normal
+    --comet-project dinoflow-classifier
 

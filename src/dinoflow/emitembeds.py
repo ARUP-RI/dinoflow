@@ -48,7 +48,7 @@ def compute_embeddings(backbone: str,
     # Setup dataset and dataloader
     dataset = TubeData(input_csv, 
                       data_root=dataroot,
-                      labelkey="BONE MARROW", # This is ignored but we must provide a value
+                      labelkey="path", # This is ignored but we must provide a value
                       tubes_to_return=[tube_type],
                       events_to_return=int(events))
     dataloader = DataLoader(dataset, 
@@ -67,7 +67,7 @@ def compute_embeddings(backbone: str,
             
             for i in range(len(batch)):
                 sample_idx = batch_idx * batch_size + i
-                accession = rowdict['ACCESSION'][i]
+                accession = rowdict['accession'][i]
                 
                 output = {
                     'embeddings': embeddings[i].cpu(),
