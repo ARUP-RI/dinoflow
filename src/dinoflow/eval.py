@@ -26,7 +26,7 @@ from torch.utils.data import DataLoader, Dataset
 import numpy as np
 
 
-from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint, BTMTubes, load_btm_from_checkpoint, IlseBagModel, munge_state_dict
+from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint, BTMTubes, load_btm_from_checkpoint, IlseBagModel, munge_state_dict, SetTransformer3Tube
 from dinoflow.data import TubeData, collate_fn, compose, shift, scale, noise, standardize_range, CSVDataset
 from dinoflow import util
 from dinoflow.plmodels import BinaryClassificationModel, ClassificationModel, RegressionModel
@@ -127,7 +127,7 @@ class ClassificationHead(nn.Module):
             x = x.to(layer_dtype)
         return self.layers(x) * self.output_scale_factor
     
-class CombinedModel_3tubes(nn.Module):
+class CombinedModel3Tubes(nn.Module):
 
     def __init__(self, backbone, classifier, freeze_backbone=False):
         super().__init__()
@@ -767,6 +767,7 @@ def train_settransformer3tube(run_name: str,
                          train_csv: str,
                          test_csv: str, 
                          mode: str = 'binary',
+                         fpst: bool = False, # set to true to use FPS-Transformer instead of SetTransformer
                          dataroot: str = ".",
                          labelkey: str = "label",
                          batch_size: int = 16,
@@ -778,14 +779,13 @@ def train_settransformer3tube(run_name: str,
                          comet_workspace: str = None,
                          comet_project: str = None):
     
-    from dinoflow.compmodels.transformer_model import SetTransformer, FPSTransformer, SetTransformer3Tube
-    from dinoflow.compmodels.graph_model import GINFPSST
     from dinoflow.compmodels.agg import MeanPool
+    from dinoflow.compmodels.graph_model import GINFPSST
     torch.multiprocessing.set_sharing_strategy('file_system')
     
     assert mode in ('binary', 'multiclass', 'regression'), f"Unknown mode: {mode}"
-    model = CombinedModel_3tubes(
-        backbone=SetTransformer3Tube(dim_input=13, dim_hidden=128, num_heads=2, num_inds=128, hidden_layers=3, layer_norm=True, dim_output=128),
+    model = CombinedModel3Tubes(
+        backbone=SetTransformer3Tube(dim_input=13, dim_hidden=128, num_heads=2, num_inds=128, hidden_layers=3, layer_norm=True, dim_output=128, fpst=fpst),
         classifier=nn.Sequential(MeanPool(), ClassificationHead(128 * 3, num_classes=num_classes)),
     )
     model = model.to(DEVICE)

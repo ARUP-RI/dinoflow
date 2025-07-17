@@ -5,6 +5,7 @@ import torch.nn.functional as F
 
 import logging
 logger = logging.getLogger(__name__)
+from dinoflow.compmodels.transformer_model import SetTransformer, FPSTransformer
 
 
 def munge_state_dict(state_dict):
@@ -402,6 +403,44 @@ class EncoderWithIlseMIL(nn.Module):
         x, _ = self.mil_attn(x)
         x = self.output_head(x.flatten(start_dim=1))
         return x
+    
+
+class SetTransformer3Tube(nn.Module):
+    def __init__(
+        self,
+        dim_input,
+        dim_hidden,  # dim_hidden must be divisible by num_heads i.e. dim_hidden%num_heads = 0
+        num_heads,
+        num_inds,  
+        hidden_layers,
+        layer_norm,
+        dim_output,
+        fpst=False,
+    ):
+        super().__init__()
+
+        if fpst:
+            self.m_model = FPSTransformer(dim_input=dim_input, dim_hidden=dim_hidden, num_heads=num_heads, fps_ratio=0.01, layer_norm=layer_norm, dim_output=dim_output)
+            self.b_model = FPSTransformer(dim_input=dim_input, dim_hidden=dim_hidden, num_heads=num_heads, fps_ratio=0.01, layer_norm=layer_norm, dim_output=dim_output)
+            self.t_model = FPSTransformer(dim_input=dim_input, dim_hidden=dim_hidden, num_heads=num_heads, fps_ratio=0.01, layer_norm=layer_norm, dim_output=dim_output)
+        else:
+            self.m_model = SetTransformer(dim_input=dim_input, dim_hidden=dim_hidden, num_heads=num_heads, num_inds=num_inds, hidden_layers=hidden_layers, layer_norm=layer_norm, dim_output=dim_output)
+            self.b_model = SetTransformer(dim_input=dim_input, dim_hidden=dim_hidden, num_heads=num_heads, num_inds=num_inds, hidden_layers=hidden_layers, layer_norm=layer_norm, dim_output=dim_output)
+            self.t_model = SetTransformer(dim_input=dim_input, dim_hidden=dim_hidden, num_heads=num_heads, num_inds=num_inds, hidden_layers=hidden_layers, layer_norm=layer_norm, dim_output=dim_output)
+
+    def forward(self, eventdict):
+        b_events = eventdict['b'].float()
+        t_events = eventdict['t'].float()
+        m_events = eventdict['m'].float()
+        m_out = self.m_model(m_events)
+        b_out = self.b_model(b_events)
+        t_out = self.t_model(t_events)
+
+        # Concatenate along the feature dimension (dim=2)
+        # Assuming each output has shape [batch_size, sequence_length, dim_output]
+        x = torch.cat((m_out, b_out, t_out), dim=2)
+        return x
+
 
 
 if __name__=="__main__":
