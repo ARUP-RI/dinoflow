@@ -6,6 +6,8 @@ import torch.nn.functional as F
 import logging
 logger = logging.getLogger(__name__)
 
+from dinoflow.compmodels.transformer_model import SetTransformer
+
 
 def munge_state_dict(state_dict):
     """
@@ -294,7 +296,7 @@ class IlseBagEncoder(nn.Module):
         #attn = F.sigmoid(attn)  # sigmoid, no dim needed
 
         # bag_embeddings have shape: batch size x embedding_dim
-        bag_embeddings = (attn.permute((0, 2, 1)) @ x).squeeze(dim=1) # we multiple [batch, embedding_dim, event] @ [batch, event] to get [batch, embedding_dim]
+        bag_embeddings = (attn.permute((0, 2, 1)) @ x).squeeze(dim=1) # we multiply [batch, embedding_dim, event] @ [batch, event] to get [batch, embedding_dim]
         # cast up now that we have small matrices b/c cross entropy loss
         # can't handle float16
         return bag_embeddings, attn
@@ -325,7 +327,7 @@ class IlseBagModel(nn.Module):
 
 class IlseBagModelWithProjection(nn.Module):
 
-    def __init__(self, num_features, model_embed_dim, output_classes=1, proto_dim=256, bag_classes=1, hidden_dim=1024, projection_dim=4096):
+    def __init__(self, num_features, model_embed_dim, output_classes=1, proto_dim=256, bag_classes=1, encoder_mlp_layers=2,hidden_dim=1024, projection_dim=4096):
         super().__init__()
         self.model_conf = {
             'num_features': num_features,
@@ -334,7 +336,7 @@ class IlseBagModelWithProjection(nn.Module):
             'proto_dim': proto_dim,
             'bag_classes': bag_classes
         }
-        self.instance_encoder = MLP(num_features, model_embed_dim, model_embed_dim, n_layers=2, residual=False)
+        self.instance_encoder = MLP(num_features, model_embed_dim, model_embed_dim, n_layers=encoder_mlp_layers, residual=False)
         self.mil_attn = IlseBagEncoder(model_embed_dim, proto_dim, bag_classes)
         # self.output_head = MLP(model_embed_dim * bag_classes, 128, output_classes, n_layers=2, residual=False)
         self.projection_head = ProjectionHead(model_embed_dim, hidden_dim, projection_dim)
@@ -345,6 +347,32 @@ class IlseBagModelWithProjection(nn.Module):
         x = self.projection_head(x)
         return x
         
+
+class IlseBagModelWithClassifier(nn.Module):
+
+    def __init__(self, num_features, model_embed_dim, output_classes=1, proto_dim=256, bag_classes=1, encoder_mlp_layers=2, classifier_mlp_layers=2, classifier_hidden_dim=512):
+        super().__init__()
+        self.model_conf = {
+            'num_features': num_features,
+            'model_embed_dim': model_embed_dim,
+            'output_classes': output_classes,
+            'proto_dim': proto_dim,
+            'bag_classes': bag_classes,
+            'encoder_mlp_layers': encoder_mlp_layers,
+            'classifier_mlp_layers': classifier_mlp_layers,
+            'classifier_hidden_dim': classifier_hidden_dim,
+
+        }
+        self.instance_encoder = MLP(num_features, model_embed_dim, model_embed_dim, n_layers=encoder_mlp_layers, residual=False)
+        self.mil_attn = IlseBagEncoder(model_embed_dim, proto_dim, bag_classes)
+        self.classifier = MLP(model_embed_dim * bag_classes, classifier_hidden_dim, output_classes, n_layers=classifier_mlp_layers, residual=False)
+
+    def forward(self, x):
+        x = self.instance_encoder(x)
+        x, attn = self.mil_attn(x)
+        x = self.classifier(x.flatten(start_dim=1))
+        return x
+
 
 class Ilse3TubeModel(nn.Module):
 
@@ -404,8 +432,53 @@ class EncoderWithIlseMIL(nn.Module):
         return x
 
 
+class IlseABMilCombo(nn.Module):
+    """
+    This version combines the transformer encoder ('TubeEncoder') with the ABMIL outputs and
+    just cats them together and then runs them through a 3 layer MLP
+    """
+    def __init__(self, num_features, model_embed_dim, layers, heads, d_ff, output_classes=1, proto_dim=256, bag_classes=1):
+        super().__init__()
+        self.encoder = TubeEncoder(num_features, model_embed_dim, layers, heads, d_ff, layertype='swiglu')
+        self.mil_attn = IlseBagEncoder(model_embed_dim, proto_dim, bag_classes)
+        self.output_head = MLP(model_embed_dim * (bag_classes + 1), 128, output_classes, n_layers=3, residual=False)
+    
+    def forward(self, x):
+        enc_output = self.encoder(x, use_cls_token=False)
+        cls_token = enc_output[:, 0, :]
+        enc_output = enc_output[:, 1:, :]
+        x, _ = self.mil_attn(enc_output)
+        x = torch.cat((cls_token, x), dim=1)
+        x = self.output_head(x.flatten(start_dim=1))
+        return x
+
+
+class SetTransformerWithProjection(nn.Module):
+    """
+    A Set Transformer model with a projection head
+    """
+    def __init__(self, num_features, model_embed_dim, heads, hidden_layers, proto_dim, projection_dim):
+        super().__init__()
+        model_conf = {
+            'num_features': num_features,
+            'model_embed_dim': model_embed_dim,
+            'heads': heads,
+            'hidden_layers': hidden_layers,
+            'proto_dim': proto_dim,
+            'projection_dim': projection_dim
+        }
+        self.encoder = SetTransformer(dim_input=num_features, dim_hidden=model_embed_dim, num_heads=heads, num_inds=proto_dim, hidden_layers=hidden_layers, layer_norm=True, dim_output=model_embed_dim)
+        self.projection_head = ProjectionHead(model_embed_dim, model_embed_dim, projection_dim)
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = x.mean(dim=1) # Mean pool the output??
+        x = self.projection_head(x)
+        return x
+
+
 if __name__=="__main__":
-    t = EncoderWithIlseMIL(13, model_embed_dim=128, layers=4, heads=2, d_ff=2048, output_classes=1, proto_dim=256, bag_classes=1)
-    x = torch.randn(32, 10, 13)
-    y = t(x)
+    model = SetTransformerWithProjection(13, 128, 2, 256, 4096)
+    x = torch.randn(32, 174, 13)
+    y = model(x)
     print(y.shape)

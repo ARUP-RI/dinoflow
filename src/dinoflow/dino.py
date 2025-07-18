@@ -22,7 +22,7 @@ import numpy as np
 import logging
 
 
-from dinoflow.models import IlseBagModel, IlseBagModelWithProjection, TubeEncoder, TubeEncoderWithProjection
+from dinoflow.models import IlseBagModel, IlseBagModelWithProjection, TubeEncoder, TubeEncoderWithProjection, SetTransformerWithProjection
 from dinoflow import data
 from dinoflow.loss import KoLeoLoss, CosineSimLoss, SelfCosineSimLoss, KDELoss
 from dinoflow.data import scale, shift, shuffle, compose, noise, standardize_range, subsample_events, NoLabelTubes, subsample_batch
@@ -380,45 +380,63 @@ def train_dino(conf, run_name):
         if ckpt.get('teacher_center') is not None:
             teacher_center = ckpt['teacher_center']
     else:
-        student = TubeEncoderWithProjection(
-            num_features=conf['model']['num_features'],
-            model_embed_dim=conf['model']['model_dim'],
-            layers=conf['model']['layers'],
-            heads=conf['model']['heads'],
-            d_ff=conf['model']['d_ff'],
-            hidden_dim=conf['model']['hidden_dim'],
-            projection_dim=conf['model']['projection_dim'],
-            layer_type=conf['model']['layer_type']).to(DEVICE)
-        
-        teacher = TubeEncoderWithProjection(
-            num_features=conf['model']['num_features'],
-            model_embed_dim=conf['model']['model_dim'],
-            layers=conf['model']['layers'],
-            heads=conf['model']['heads'],
-            d_ff=conf['model']['d_ff'],
-            hidden_dim=conf['model']['hidden_dim'],
-            projection_dim=conf['model']['projection_dim'],
-            layer_type=conf['model']['layer_type']).to(DEVICE)
+        if conf['model']['model_class'] == 'dinoflow':
+            student = TubeEncoderWithProjection(
+                num_features=conf['model']['num_features'],
+                model_embed_dim=conf['model']['model_dim'],
+                layers=conf['model']['layers'],
+                heads=conf['model']['heads'],
+                d_ff=conf['model']['d_ff'],
+                hidden_dim=conf['model']['hidden_dim'],
+                projection_dim=conf['model']['projection_dim'],
+                layer_type=conf['model']['layer_type']).to(DEVICE)
+            
+            teacher = TubeEncoderWithProjection(
+                num_features=conf['model']['num_features'],
+                model_embed_dim=conf['model']['model_dim'],
+                layers=conf['model']['layers'],
+                heads=conf['model']['heads'],
+                d_ff=conf['model']['d_ff'],
+                hidden_dim=conf['model']['hidden_dim'],
+                projection_dim=conf['model']['projection_dim'],
+                layer_type=conf['model']['layer_type']).to(DEVICE)
+        elif conf['model']['model_class'] == 'abmil':
+            student = IlseBagModelWithProjection(
+                num_features=conf['model']['num_features'],
+                model_embed_dim=conf['model']['model_dim'],
+                output_classes=conf['model']['model_dim'],
+                proto_dim=conf['model']['proto_dim'],
+                bag_classes=conf['model']['bag_classes'],
+                hidden_dim=conf['model']['hidden_dim'],
+                projection_dim=conf['model']['projection_dim']
+            ).to(DEVICE)
 
-        # student = IlseBagModelWithProjection(
-        #     num_features=conf['model']['num_features'],
-        #     model_embed_dim=conf['model']['model_dim'],
-        #     output_classes=conf['model']['model_dim'],
-        #     proto_dim=conf['model']['proto_dim'],
-        #     bag_classes=conf['model']['bag_classes'],
-        #     hidden_dim=conf['model']['hidden_dim'],
-        #     projection_dim=conf['model']['projection_dim']
-        # ).to(DEVICE)
-
-        # teacher = IlseBagModelWithProjection(
-        #     num_features=conf['model']['num_features'],
-        #     model_embed_dim=conf['model']['model_dim'],
-        #     output_classes=conf['model']['model_dim'],
-        #     proto_dim=conf['model']['proto_dim'],
-        #     bag_classes=conf['model']['bag_classes'],
-        #     hidden_dim=conf['model']['hidden_dim'],
-        #     projection_dim=conf['model']['projection_dim'],
-        # ).to(DEVICE)
+            teacher = IlseBagModelWithProjection(
+                num_features=conf['model']['num_features'],
+                model_embed_dim=conf['model']['model_dim'],
+                output_classes=conf['model']['model_dim'],
+                proto_dim=conf['model']['proto_dim'],
+                bag_classes=conf['model']['bag_classes'],
+                hidden_dim=conf['model']['hidden_dim'],
+                projection_dim=conf['model']['projection_dim'],
+            ).to(DEVICE)
+        elif conf['model']['model_class'] == 'st':
+            student = SetTransformerWithProjection(
+                num_features=conf['model']['num_features'],
+                model_embed_dim=conf['model']['model_dim'],
+                heads=conf['model']['heads'],
+                hidden_layers=conf['model']['hidden_layers'],
+                proto_dim=conf['model']['proto_dim'],
+                projection_dim=conf['model']['projection_dim']
+            ).to(DEVICE)
+            teacher = SetTransformerWithProjection(
+                num_features=conf['model']['num_features'],
+                model_embed_dim=conf['model']['model_dim'],
+                heads=conf['model']['heads'],
+                hidden_layers=conf['model']['hidden_layers'],
+                proto_dim=conf['model']['proto_dim'],
+                projection_dim=conf['model']['projection_dim']
+            ).to(DEVICE)
 
         optimizer = torch.optim.AdamW(student.parameters(), lr=conf['training']['min_lr'])
 
@@ -512,6 +530,7 @@ def train_dino(conf, run_name):
             ckpt = {
                 "student": student_unwrapped.state_dict(),
                 "teacher": teacher.state_dict(),
+                "teacher_cls": teacher.__class__.__name__,
                 "opt": optimizer.state_dict(),
                 "teacher_center": teacher_center,
                 "modelconf": conf['model'],

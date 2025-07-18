@@ -97,10 +97,22 @@ class DeepCyTof(nn.Module):
     
 
 if __name__=="__main__":
-    num_features = 10
+    num_features = 13
     num_cells = 100
     x = torch.randn(32, 1, num_cells, num_features) # Example input tensor
     model = DeepCyTof(num_features, pool_height=num_cells)
+
+    # Print parameters for each component
+    print("Parameters by component:")
+    print(f"conv1: {sum(p.numel() for p in model.conv1.parameters())}")
+    print(f"bn1: {sum(p.numel() for p in model.bn1.parameters())}")
+    print(f"conv2: {sum(p.numel() for p in model.conv2.parameters())}")
+    print(f"bn2: {sum(p.numel() for p in model.bn2.parameters())}")
+    print(f"pool: {sum(p.numel() for p in model.pool.parameters())}")
+    print(f"dense1: {sum(p.numel() for p in model.dense1.parameters())}")
+    print(f"bn3: {sum(p.numel() for p in model.bn3.parameters())}")
+    print(f"dense2: {sum(p.numel() for p in model.dense2.parameters())}")
+
     # Count total number of parameters in the model
     num_params = sum(p.numel() for p in model.parameters())
     print(f"Total number of parameters: {num_params}")

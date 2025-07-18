@@ -5,6 +5,7 @@ data:
 
 
 model:
+  model_class: "dinoflow"
   num_features: 13
   model_dim: 256
   layers: 6

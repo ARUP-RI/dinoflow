@@ -8,6 +8,7 @@ import numpy as np
 from collections import defaultdict
 from typing import List
 import logging
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -386,6 +387,37 @@ class TubeData(Dataset):
     def __len__(self):
         return len(self.data)
     
+    def _process_label(self, row):
+        """
+        Process label(s) from a row based on self.labelkey.
+        If labelkey contains commas, compute logical OR of multiple boolean values.
+        If labelkey is single, use original logic.
+        """
+        if ',' in self.labelkey:
+            # Split the labelkey by commas and strip whitespace
+            label_keys = [key.strip() for key in self.labelkey.split(',')]
+            
+            # Extract each label value
+            label_values = []
+            for key in label_keys:
+                value = row[key]
+                # Check if any value is float - raise exception if so
+                if isinstance(value, float):
+                    raise ValueError(f"Multiple label keys are only supported for boolean labels. Found float value {value} for key '{key}'")
+                label_values.append(bool(value))
+            
+            # Compute logical OR of all boolean values
+            return 1.0 if any(label_values) else 0.0
+        else:
+            # Single label key - original behavior
+            label = row[self.labelkey]
+            # If datatype of row with label is float, we just pass back the value,
+            # otherwise we convert to 0/1
+            if isinstance(label, float):
+                return label
+            else:
+                return 1.0 if label else 0.0
+    
     def __getitem__(self, i):
         row = self.data.iloc[i]
         tubes = {}
@@ -412,17 +444,7 @@ class TubeData(Dataset):
         if len(tubes) == 1:
             tubes = tubes[self.tubes_to_return[0]]
          
-        # For now....
-        label = row[self.labelkey]
-        # If datatype of row with label is float, we just pass back the value,
-        # otherwise we convert to 0/1
-        if isinstance(label, float):
-            label = label
-        else:
-            if label:
-                label = 1.0
-            else:
-                label = 0.0
+        label = self._process_label(row)
 
         rowdict = row.to_dict()
         rowdict['label'] = label
@@ -440,8 +462,15 @@ class TubeData(Dataset):
         return self.__getitem__(row.index[0])
     
     def positive_negative_samples(self):
-        pos = self.data[self.data[self.labelkey] == 1]
-        neg = self.data[self.data[self.labelkey] == 0]
+        if ',' in self.labelkey:
+            # Handle comma-separated label keys by applying _process_label to each row
+            positive_mask = self.data.apply(lambda row: self._process_label(row) == 1.0, axis=1)
+            pos = self.data[positive_mask]
+            neg = self.data[~positive_mask]
+        else:
+            # Single label key - original behavior
+            pos = self.data[self.data[self.labelkey] == 1]
+            neg = self.data[self.data[self.labelkey] == 0]
         return pos, neg
 
 
@@ -450,16 +479,6 @@ def collate_fn(items):
     The NoLabelTubes dataset returns a list of tensors which may have different sizes, so we can't stack them
     """
     return items
-
-import pandas as pd
-from torch.utils.data import Dataset
-from PIL import Image
-from pathlib import Path
-
-import logging
-
-logger = logging.getLogger(__name__)
-
 
 def pil_imgloader(path):
     return Image.open(path).convert("RGB")
