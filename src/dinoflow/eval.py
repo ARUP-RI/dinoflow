@@ -141,7 +141,7 @@ class CombinedModel3Tubes(nn.Module):
         self.backbone = backbone
         self.classifier = classifier
         if freeze_backbone:
-            # self.backbone.eval()
+            self.backbone.eval()
             for p in self.backbone.parameters():
                 p.requires_grad = False
 
@@ -163,7 +163,7 @@ class CombinedModel(nn.Module):
         self.backbone = backbone
         self.classifier = classifier
         if freeze_backbone:
-            # self.backbone.eval()
+            self.backbone.eval()
             for p in self.backbone.parameters():
                 p.requires_grad = False
 
