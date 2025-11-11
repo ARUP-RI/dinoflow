@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-export CUDA_VISIBLE_DEVICES=4,5
+export CUDA_VISIBLE_DEVICES=0,1
 
 
 export OMP_NUM_THREADS=8
@@ -25,14 +25,15 @@ uv run src/dinoflow/eval.py train \
     $1 \
     /mnt/ri_share/Data/flow2/casedx_2024-08-21_noreport_train_with_m_projections.csv \
     /mnt/ri_share/Data/flow2/casedx_2024-08-21_noreport_test_with_m_projections.csv \
-    /home/22319/data/brendan/dinoflow/checkpoints/b_sml_moreaug/b_sml_moreaug_epoch99.pt \
+    /home/22319/data/brendan/dinoflow/checkpoints/t_sml_moreaug/t_sml_moreaug_epoch99.pt \
     conf.yaml \
-    --labelkey 'CLL' \
+    --labelkey 'TALL' \
     --mode 'binary' \
-    --tube-type b \
+    --tube-type t \
     --dataroot /data2/brendan/flow/ \
-    --events 16384 \
-    --batch-size 32 \
+    --events 4096 \
+    --val-events 8192 \
+    --batch-size 64 \
     --epochs 50 \
     --comet-workspace "brendan" \
     --comet-project "dinoflow-classifier" \

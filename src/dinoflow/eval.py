@@ -27,6 +27,7 @@ from torch.utils.data import DataLoader, Dataset
 import numpy as np
 
 from dinoflow.compmodels.transformer_model import SetTransformer, FPSTransformer
+from dinoflow.compmodels.modules import PMA
 from dinoflow.compmodels.agg import MeanPool
 from dinoflow.models import TubeEncoder, load_checkpoint, BTMTubes, load_btm_from_checkpoint, IlseBagModel, IlseBagModelWithClassifier, munge_state_dict
 from dinoflow.data import TubeData, collate_fn, compose, shift, scale, noise, standardize_range, CSVDataset
@@ -146,7 +147,7 @@ class ClassificationHead(nn.Module):
         layer_dtype = self.layers[0].weight.dtype
         if x.dtype != layer_dtype:
             x = x.to(layer_dtype)
-        return self.layers(x) * self.output_scale_factor
+        return self.layers(x).squeeze(-1) * self.output_scale_factor
     
 
 class CombinedModel(nn.Module):
@@ -770,14 +771,34 @@ def train_settransformer(run_name: str,
 
         model = CombinedModel(
             backbone=backbone,
-            classifier=nn.Sequential(MeanPool(), ClassificationHead(modelconf['model_dim'], num_classes=num_classes)),
+            classifier=nn.Sequential(
+                MeanPool(),
+                ClassificationHead(modelconf['model_dim'], num_classes=num_classes)),
         )
+        model.modelconf = modelconf
     else:
+        modelconf = {
+            'backbone_cls': 'SetTransformer',
+            'num_features': 13,
+            'model_dim': 256,
+            'heads': 4,
+            'hidden_layers': 4,
+            'proto_dim': 128,
+            # 'projection_dim': 4096
+        }
         model = CombinedModel(
-            backbone=SetTransformer(dim_input=13, dim_hidden=128, num_heads=2, num_inds=128, hidden_layers=3, layer_norm=True, dim_output=128),
-            #backbone=FPSTransformer(dim_input=13, dim_hidden=128, num_heads=2, fps_ratio=0.01, layer_norm=True, dim_output=128),
-            classifier=nn.Sequential(MeanPool(), ClassificationHead(128, num_classes=num_classes)),
+            backbone=SetTransformer(dim_input=modelconf['num_features'],
+                                    dim_hidden=modelconf['model_dim'],
+                                    num_heads=modelconf['heads'],
+                                    num_inds=modelconf['proto_dim'],
+                                    hidden_layers=modelconf['hidden_layers'],
+                                    layer_norm=True,
+                                    dim_output=modelconf['model_dim']),
+            classifier=nn.Sequential(
+                PMA(modelconf['model_dim'], modelconf['heads'], 1), 
+                ClassificationHead(modelconf['model_dim'], num_classes=num_classes)),
         )
+        model.modelconf = modelconf
 
     model = model.to(DEVICE)
     

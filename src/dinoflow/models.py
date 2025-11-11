@@ -180,6 +180,18 @@ class TubeEncoderWithProjection(nn.Module):
         x = self.projection_head(x)
         return x
 
+class TubeEncoderWithProjectionAndEmbeddings(nn.Module):
+    def __init__(self, num_features, model_embed_dim, layers, heads, d_ff, hidden_dim, projection_dim, layer_type='normal'):
+        super().__init__()
+        self.encoder = TubeEncoder(num_features, model_embed_dim, layers, heads, d_ff, layer_type)
+        self.tube_projection_head = ProjectionHead(model_embed_dim, hidden_dim, projection_dim)
+        self.embedding_projection_head = ProjectionHead(model_embed_dim, hidden_dim, projection_dim)
+
+    def forward(self, x):
+        x = self.encoder(x)
+        tube_out = self.tube_projection_head(x)
+        embedding_out = self.embedding_projection_head(x)
+        return tube_out, embedding_out
 
 class MLP(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, n_layers=2, residual=False):

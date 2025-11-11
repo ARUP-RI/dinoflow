@@ -364,6 +364,55 @@ class NoLabelTubes(Dataset):
         return self.samples[i]
         
 
+class NoLabelTubesAndEmbeddings(Dataset):
+    def __init__(self, 
+                tubes_dirpath, 
+                embeddings_dirpath, 
+                min_events=2048, 
+                return_key="t", 
+                tube_transforms=None):
+        self.tubes_dirpath = Path(tubes_dirpath)
+        self.embeddings_dirpath = Path(embeddings_dirpath)
+        self.tube_transforms = tube_transforms
+        self.min_events = min_events
+        self.return_key = return_key
+        tubes_samples = self._scandir(self.tubes_dirpath)
+        embeddings_samples = self._scandir(self.embeddings_dirpath)
+        tube_accs = set(tubes_samples.keys())
+        logger.info(f"Found {len(tube_accs)} accessions in tube directory")
+        embedding_accs = set(embeddings_samples.keys())
+        logger.info(f"Found {len(embedding_accs)} accessions in embedding directory")
+
+        acc_intersection = tube_accs & embedding_accs
+        logger.info(f"Found {len(acc_intersection)} accessions in both tube and embedding directories")
+        self.data = []
+        for acc in acc_intersection:
+            self.data.append({"accession": acc, "tube": tubes_samples[acc], "embedding": embeddings_samples[acc]})
+
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, i):
+        item = self.data[i]
+        tube = torch.load(item["tube"], weights_only=False)
+        if item[self.return_key].shape[0] > self.min_events:
+            idx = torch.randperm(item[self.return_key].shape[0])[0:self.min_events]
+            result = item[self.return_key][idx]
+        else:
+            result = item[self.return_key]
+        
+        if self.tube_transforms:
+            result = self.tube_transforms(result)
+        embedding = torch.load(item["embedding"], weights_only=False)
+        return tube, embedding
+
+    def _scandir(self, dirpath):
+        samples = {}
+        for path in dirpath.iterdir():
+            if path.is_file() and path.suffix == '.pt':
+                accession = path.stem.split("_")[0]
+                samples[accession] = path
+        return samples
 
 class TubeData(Dataset):
     """

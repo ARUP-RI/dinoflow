@@ -341,7 +341,13 @@ def train_dino(conf, run_name):
         return_key=conf['tube_type'],
     )
     
-    loader = DataLoader(tubes, batch_size=conf['training']['batch_size'], shuffle=True, pin_memory=True, num_workers=4, collate_fn=data.collate_fn)
+    loader = DataLoader(tubes, 
+                        batch_size=conf['training']['batch_size'], 
+                        shuffle=True, 
+                        pin_memory=True, 
+                        num_workers=4, 
+                        collate_fn=data.collate_fn,
+                        drop_last=True)
 
     # Initialize here, but may be overwritten by checkpoint
     teacher_center = torch.zeros(conf['model']['projection_dim']).to(DEVICE)
