@@ -1,7 +1,7 @@
 import torch
 import pytorch_lightning as pl
 from torchmetrics import MeanMetric, MeanSquaredError, MeanAbsoluteError, R2Score, ConfusionMatrix
-from torchmetrics.classification import BinaryAccuracy
+from torchmetrics.classification import BinaryAccuracy, BinarySpecificity, BinaryPrecision, BinaryRecall
 from torchmetrics.aggregation import MeanMetric, SumMetric
 import torch.nn.functional as F
 
@@ -12,7 +12,7 @@ from pytorch_lightning.loggers import CometLogger
 from dinoflow import util
 
 class BinaryClassificationModel(pl.LightningModule):
-    def __init__(self, model, min_lr=0.00001, max_lr=0.00025, warmup_iters=10, lr_decay_iters=80, emit_predictions=False, ckpt_params=None, num_classes=1, comet_project_name=None, freeze_encoder_iters=0):
+    def __init__(self, model, min_lr=0.00001, max_lr=0.00025, warmup_iters=10, lr_decay_iters=80, emit_predictions=False, ckpt_params=None, num_classes=1, comet_project_name=None, freeze_encoder_iters=0, pos_weight=1.0, checkpoint_monitor='val_loss', checkpoint_mode='min'):
         super().__init__()
         assert num_classes==1, "Only one class permitted for binary"
         self.model = model #
@@ -21,14 +21,24 @@ class BinaryClassificationModel(pl.LightningModule):
         self.warmup_iters = warmup_iters
         self.lr_decay_iters = lr_decay_iters
         self.freeze_encoder_iters = freeze_encoder_iters
+        self.pos_weight = pos_weight
+        self.checkpoint_monitor_metric = checkpoint_monitor
+        self.checkpoint_monitor_mode = checkpoint_mode
         self.accuracy = BinaryAccuracy()
+        self.specificity = BinarySpecificity()
+        self.precision = BinaryPrecision()  # This is PPV
+        self.recall = BinaryRecall()        # For NPV calculation
+        self.confusion_matrix = ConfusionMatrix(task='binary')
         self.training_loss_mean = MeanMetric()
         self.validation_loss_mean = MeanMetric()
         self.emit_predictions = emit_predictions
         self.comet_project_name = comet_project_name
-        # These are the thresholds at which we compute vthe sensitivity
+        # These are the thresholds at which we compute the sensitivity
         # Probably best not to change them
         self.fpr_thresholds = [0.01, 0.02, 0.05]
+        # Sensitivity thresholds for computing specificity (equivalent to FNR thresholds)
+        # FNR = 1 - Sensitivity, so sensitivity 0.99 = FNR 0.01
+        self.sensitivity_thresholds = [0.95, 0.99, 0.995]
         if ckpt_params is None:
             ckpt_params = {}
         ckpt_params['model_class'] = self.__class__.__name__
@@ -51,7 +61,12 @@ class BinaryClassificationModel(pl.LightningModule):
         x, rowinfo = batch
         labels = rowinfo['label']
         preds = self(x)
-        loss = torch.nn.functional.binary_cross_entropy_with_logits(preds.squeeze(1), labels.float())
+        pos_weight_tensor = torch.tensor([self.pos_weight], device=preds.device)
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(
+            preds.squeeze(1), 
+            labels.float(), 
+            pos_weight=pos_weight_tensor
+        )
         self.training_loss_mean.update(loss)
         return loss
     
@@ -71,7 +86,12 @@ class BinaryClassificationModel(pl.LightningModule):
         logits = self(x)
         preds = torch.sigmoid(logits.squeeze(1))
         
-        loss = torch.nn.functional.binary_cross_entropy_with_logits(logits.squeeze(1), labels.float())
+        pos_weight_tensor = torch.tensor([self.pos_weight], device=logits.device)
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(
+            logits.squeeze(1), 
+            labels.float(), 
+            pos_weight=pos_weight_tensor
+        )
         
         # Store predictions and labels for later use
         self.val_preds.append(preds.detach().float())
@@ -81,8 +101,13 @@ class BinaryClassificationModel(pl.LightningModule):
             for p, l, a in zip(preds, labels, accs):
                 if l == 1 or p.item() > 0.5:
                     print(f"{a}\t{p.item() :.4f}\t{l.item() :.2f}")
-        self.accuracy(preds, labels)
         
+        # Update all metrics
+        self.accuracy(preds, labels)
+        self.specificity(preds, labels)
+        self.precision(preds, labels)
+        self.recall(preds, labels)
+        self.confusion_matrix(preds, labels)
         self.validation_loss_mean.update(loss)
 
     def on_validation_epoch_end(self):
@@ -116,21 +141,69 @@ class BinaryClassificationModel(pl.LightningModule):
 
         
         sensitivities = np.zeros(len(self.fpr_thresholds))
-        # Only create and log the plot on the main process
-        if self.trainer.is_global_zero and isinstance(self.logger, CometLogger):
-           
-            fpr, tpr, thresholds = roc_curve(gathered_labels.cpu().numpy(), gathered_preds.cpu().numpy())
-            roc_auc = auc(fpr, tpr)
+        specificities = np.zeros(len(self.sensitivity_thresholds))
+        
+        # Calculate metrics for all processes (needed for checkpointing)
+        fpr, tpr, thresholds_roc = roc_curve(gathered_labels.cpu().numpy(), gathered_preds.cpu().numpy())
+        roc_auc = auc(fpr, tpr)
+        
+        # Calculate additional metrics using optimal threshold (F1 maximizing)
+        # We'll compute these after finding the best threshold
 
-            # Compute sensitivity at each fpr threshold
-            for i, fpr_threshold in enumerate(self.fpr_thresholds):
-                idx = fpr <= fpr_threshold
-                sensitivity = tpr[idx]
-                if len(sensitivity) > 0:
-                    sensitivities[i] = max(sensitivity)
-                else:
-                    sensitivities[i] = 0
-            
+        # Compute sensitivity at each fpr threshold
+        for i, fpr_threshold in enumerate(self.fpr_thresholds):
+            idx = fpr <= fpr_threshold
+            sensitivity = tpr[idx]
+            if len(sensitivity) > 0:
+                sensitivities[i] = max(sensitivity)
+            else:
+                sensitivities[i] = 0
+        
+        # Compute specificity at each sensitivity threshold
+        for i, sens_threshold in enumerate(self.sensitivity_thresholds):
+            idx = tpr >= sens_threshold
+            specificity = 1 - fpr[idx]  # Convert FPR to specificity
+            if len(specificity) > 0:
+                specificities[i] = max(specificity)
+            else:
+                specificities[i] = 0
+        
+        # Create Precision-Recall curve and compute metrics
+        precision_vals, recall_vals, thresholds_pr = precision_recall_curve(gathered_labels.cpu().numpy(), gathered_preds.cpu().numpy())
+        avg_precision = average_precision_score(gathered_labels.cpu().numpy(), gathered_preds.cpu().numpy())
+        
+        # Find threshold that maximizes F1 score
+        f1_scores = 2 * precision_vals * recall_vals / (precision_vals + recall_vals)
+        max_f1_idx = np.argmax(f1_scores)
+        threshold = thresholds_pr[max_f1_idx]
+        best_recall = recall_vals[max_f1_idx]
+        best_precision = precision_vals[max_f1_idx]
+        best_f1 = f1_scores[max_f1_idx]
+        
+        # Calculate additional metrics using the SAME approach as original metrics
+        # All metrics computed at the F1-maximizing point from the PR curve
+        
+        # PPV is the same as precision (already computed as best_precision)
+        ppv = best_precision
+        
+        # For other metrics, we need to calculate them at the same F1-maximizing threshold
+        # Apply the F1-maximizing threshold to get binary predictions
+        binary_preds = (gathered_preds.cpu().numpy() >= threshold).astype(int)
+        labels_np = gathered_labels.cpu().numpy().astype(int)
+        
+        # Calculate confusion matrix components at the F1-maximizing threshold
+        tp = np.sum((binary_preds == 1) & (labels_np == 1))
+        tn = np.sum((binary_preds == 0) & (labels_np == 0))
+        fp = np.sum((binary_preds == 1) & (labels_np == 0))
+        fn = np.sum((binary_preds == 0) & (labels_np == 1))
+        
+        # Calculate derived metrics at the same threshold
+        specificity_val = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+        npv = tn / (tn + fn) if (tn + fn) > 0 else 0.0  # Negative Predictive Value
+        accuracy_f1_threshold = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0.0
+        
+        # Only create and log plots if we have CometML logger and are on main process
+        if self.trainer.is_global_zero and isinstance(self.logger, CometLogger):
             fig, ax = plt.subplots(figsize=(10, 8))
             ax.plot(fpr, tpr, label=f'ROC curve (AUC = {roc_auc:.3f})')
             ax.plot([0, 1], [0, 1], 'k--')
@@ -145,18 +218,6 @@ class BinaryClassificationModel(pl.LightningModule):
             # Log the ROC curve to CometML
             self.logger.experiment.log_figure(figure=fig, figure_name="ROC_Curve", step=self.current_epoch)
             plt.close(fig)
-            
-            # Create Precision-Recall curve
-            precision_vals, recall_vals, thresholds = precision_recall_curve(gathered_labels.cpu().numpy(), gathered_preds.cpu().numpy())
-            avg_precision = average_precision_score(gathered_labels.cpu().numpy(), gathered_preds.cpu().numpy())
-            
-            # Find threshold that maximizes F1 score
-            f1_scores = 2 * precision_vals * recall_vals / (precision_vals + recall_vals)
-            max_f1_idx = np.argmax(f1_scores)
-            threshold = thresholds[max_f1_idx]
-            best_recall = recall_vals[max_f1_idx]
-            best_precision = precision_vals[max_f1_idx]
-            best_f1 = f1_scores[max_f1_idx]
 
             fig, ax = plt.subplots(figsize=(10, 8))
             ax.plot(recall_vals, precision_vals, label=f'PR curve (AP = {avg_precision:.3f})')
@@ -172,29 +233,34 @@ class BinaryClassificationModel(pl.LightningModule):
             self.logger.experiment.log_figure(figure=fig, figure_name="PR_Curve", step=self.current_epoch)
             plt.close(fig)
 
-        # We only want to log these from the main process (where self.trainer.is_global_zero is true), and it will hang
-        # if we have sync_dict=True since we are not syncing anything across processes here
-        self.log('recall', best_recall)
-        self.log('fscore', best_f1)
-        self.log('threshold', threshold)
-        self.log('precision', best_precision)
+        # Log metrics with sync_dist=True so they are available for checkpointing across all processes
+        self.log('recall', best_recall, sync_dist=True)
+        self.log('fscore', best_f1, sync_dist=True)
+        self.log('threshold', threshold, sync_dist=True)
+        self.log('precision', best_precision, sync_dist=True)
+        self.log('specificity', specificity_val, sync_dist=True)
+        self.log('ppv', ppv, sync_dist=True)
+        self.log('npv', npv, sync_dist=True)
         for sens, fpr_threshold in zip(sensitivities, self.fpr_thresholds):
-            self.log(f'recall_at_fpr_{fpr_threshold}', sens)
+            self.log(f'recall_at_fpr_{fpr_threshold}', sens, sync_dist=True)
+        for spec, sens_threshold in zip(specificities, self.sensitivity_thresholds):
+            self.log(f'specificity_at_recall_{sens_threshold}', spec, sync_dist=True)
 
         # Log the Area Under Precision-Recall Curve (AUPRC)
         # This is the same as average precision score
-        if self.trainer.is_global_zero and isinstance(self.logger, CometLogger):
-            self.log('auprc', avg_precision)
-        else:
-            self.log('auprc', float("NaN"))
+        self.log('auprc', avg_precision, sync_dist=True)
 
         # Process syncing is handled by lightning for these, and we want sync_dist=True to make sure things are synced across processes 
-        self.log('accuracy', accuracy, sync_dist=True)
+        self.log('accuracy', accuracy_f1_threshold, sync_dist=True)
         self.log('val_loss', self.validation_loss_mean.compute(), sync_dist=True)
         self.log('training_loss', self.training_loss_mean.compute(), sync_dist=True)
         self.log('learning_rate', lr)
     
         self.accuracy.reset()
+        self.specificity.reset()
+        self.precision.reset()
+        self.recall.reset()
+        self.confusion_matrix.reset()
 
     def configure_optimizers(self):
         # Create parameter groups for encoder/backbone vs other parameters
@@ -236,11 +302,11 @@ class BinaryClassificationModel(pl.LightningModule):
     # Add these methods to specify checkpoint monitoring preferences
     @property
     def checkpoint_monitor(self):
-        return 'val_loss'
+        return self.checkpoint_monitor_metric
     
     @property
     def checkpoint_mode(self):
-        return 'min'
+        return self.checkpoint_monitor_mode
         
     @property
     def comet_project(self):
