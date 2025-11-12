@@ -14,7 +14,7 @@ model:
   d_ff: 2048
   layer_type: "swiglu"  # "swiglu" or "normal"
 
-  # IlseBagModel only
+  # Forr Ilse AB-MIL model only
   proto_dim: 256
   bag_classes: 1
 

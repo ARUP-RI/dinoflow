@@ -366,7 +366,8 @@ class NoLabelTubes(Dataset):
 
 class TubeData(Dataset):
     """
-    A DataSet of flow tubes. Paths to the actual tube files (.pt) along with labels are given as an input CSV file
+    A DataSet of flow tubes, along with labels supplied in a CSV file.
+    Paths to the actual tube files (.pt) along with labels are given as an input CSV file
     This can can optionally return a subset of the standard b, t, and m tubes by using the tubes_to_return arg
     If multiple tubes are present, the return value of the __getitem__ is a dictionary keyed by tube type
     But if there's only one tube (e.g. tube_type="b"), then just the tube tensor is returned, not a dictionary
@@ -451,19 +452,6 @@ def collate_fn(items):
     """
     return items
 
-import pandas as pd
-from torch.utils.data import Dataset
-from PIL import Image
-from pathlib import Path
-
-import logging
-
-logger = logging.getLogger(__name__)
-
-
-def pil_imgloader(path):
-    return Image.open(path).convert("RGB")
-
 
 def tensor_loader(path):
     return torch.load(path, map_location='cpu', weights_only=False)
@@ -474,7 +462,7 @@ def numpy_loader(path):
 
 class CSVDataset(Dataset):
     """
-    This class reads labels and images from a CSV file. By default, it expects the CSV to have at least two
+    This class reads labels and data from a CSV file. By default, it expects the CSV to have at least two
     columns: 'path' and 'label'. The 'path' column should contain the path to the image file (relative to rootdir), and the
     'label' column should contain the corresponding label. The images are loaded using PIL by default, but you can
     supply your own image loader function if you want to use a different library or method for loading images.
