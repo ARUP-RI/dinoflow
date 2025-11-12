@@ -31,7 +31,7 @@ DinoFlow supports distributed training, although it has only been tested in mult
 
     torchrun --standalone --nnodes=1 --nproc-per-node=2  src/dinoflow/dino.py /path/to/conf.yaml ...
 
-The `run_scripts/run_train.sh` script for an example of how to run dinoflow to train a new model. T
+The `run_scripts/run_train.sh` script for an example of how to run dinoflow to train a new model.
 
 Training configuration is specified through a configuration yaml - see `conf.yaml` for an example. 
 
@@ -40,21 +40,29 @@ Training configuration is specified through a configuration yaml - see `conf.yam
 ### Supervised fine-tuning
 
 
-There are multiple ways to evaluate, all of which involve training a classifier of some sort.
-The simplest thing to do is just use a single tube checkpoint (produced by run_train.sh) as a model. For instance, an m-tube model
-can be use to predict AML, and any tube model can be used for viability or differentiating bone marrow / blood samples.
-Evaluating single tube models can be accomplished by running the `run_eval.sh` script.
-
-For more sophisticated analyses, you probably want to use data from all three tubes. If you have three tube model checkpoints, you can run the `run_eval3tubes.sh` script to train a classifier using all of them. The emits a new kind of checkpoint that contains all the tube backbones as well as the trained classifier head. 
-
-To continue training a combined 3-tube model, run the `run_eval_trainfull.sh` script. You can optionally choose to unfreeze a certain number of backbone layers. 
+There are multiple ways to evaluate, all of which involve training a 'classifier' head of some sort.
+The simplest thing to do is use a single tube checkpoint (produced by `run_train.sh`) as a model. For instance, a single-tube model (with the correct markers) be use to predict AML, and any tube model can be used for viability or differentiating bone marrow / blood samples. 
 
 Training and val input data are all provided by CSV files, which should contain labels and paths to tensor files that hold the raw tube event data for each sample. 
 
+A full supervised fine-tuning command for a single tube looks like:
+
+    uv run src/dinoflow/eval.py train \
+        <run-name> \
+        /path/to/training_samples_labels.csv \
+        /path/to/validation_samples_labels.csv \
+        /path/to/dinoflow_checkpoint.pt \
+        conf.yaml \
+        --labelkey 'AML' \       # Text key in label column to target
+        --mode 'binary' \        # Binary prediction - True if label contains the labelkey, False otherwise
+        --tube-type data_key \
+        --freeze-backbone \
+        --dataroot /directory/containing/flow/data/files/ \
+        --events 4096 \
+        --batch-size 128 \
+        --epochs 50 \
+        --comet-workspace "workspace" \   # If using comet to track experiments
+        --comet-project "dinoflow" \
 
 
-### Installing torch-cluster
-
-torch-cluster is required to run some of the evaluation models, and cannot be installed automatically with uv. Instead, try this command after installing everything else:
-
-    uv pip install torch-cluster -f https://data.pyg.org/whl/torch-2.7.0+cu128.html
+The training and validation CSVs must include a "path" and "label" column. The "path" column should be the path to a raw data .pt file (see 'Input Data Format' section), which can be absolute or relative to the "dataroot" argument. The label column can contain any value or text string. If --mode="regression", then label values are interpreted as regression targets. If --mode="binary", then labels are converted to boolean targets based on the "labelkey" argument. For instance, if labelkey is "CLL" and the label value is CLL, then the the label will be True for that sample, but if the label value is "AML" the value will be False. 
