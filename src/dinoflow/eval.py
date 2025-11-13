@@ -26,7 +26,7 @@ from torch.utils.data import DataLoader, Dataset
 import numpy as np
 
 
-from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint, BTMTubes, load_btm_from_checkpoint, IlseBagModel, munge_state_dict, SetTransformer3Tube
+from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint, BTMTubes, load_btm_from_checkpoint, IlseBagModel, munge_state_dict#, SetTransformer3Tube
 from dinoflow.data import TubeData, collate_fn, compose, shift, scale, noise, standardize_range, CSVDataset
 from dinoflow import util
 from dinoflow.plmodels import BinaryClassificationModel, ClassificationModel, RegressionModel

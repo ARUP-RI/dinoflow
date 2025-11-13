@@ -2,12 +2,10 @@
 
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
-#,2,3
-
-
 export OMP_NUM_THREADS=8
 
 export TORCH_NCCL_TRACE_BUFFER_SIZE=1 # This is for debugging NCCL issues
+
 
 
 # Produces a single unified model from checkpoints/backbones for each of the three tubes 
