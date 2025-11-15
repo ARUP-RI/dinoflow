@@ -26,7 +26,7 @@ from torch.utils.data import DataLoader, Dataset
 import numpy as np
 
 
-from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint, BTMTubes, load_btm_from_checkpoint, IlseBagModel, munge_state_dict
+from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint, BTMTubes, load_btm_from_checkpoint, IlseBagModel, munge_state_dict, SetTransformer3Tube
 from dinoflow.data import TubeData, collate_fn, compose, shift, scale, noise, standardize_range, CSVDataset
 from dinoflow import util
 from dinoflow.plmodels import BinaryClassificationModel, ClassificationModel, RegressionModel
@@ -127,6 +127,27 @@ class ClassificationHead(nn.Module):
             x = x.to(layer_dtype)
         return self.layers(x) * self.output_scale_factor
     
+class CombinedModel3Tubes(nn.Module):
+
+    def __init__(self, backbone, classifier, freeze_backbone=False):
+        super().__init__()
+        if hasattr(backbone, 'model_conf'):
+            self.model_conf = backbone.model_conf
+        else:
+            self.model_conf = {"backbone_cls": backbone.__class__.__name__}
+        self.freeze_backbone = freeze_backbone
+        if hasattr(classifier, 'output_scale_factor'):
+            self.model_conf['output_scale_factor'] = classifier.output_scale_factor
+        self.backbone = backbone
+        self.classifier = classifier
+        if freeze_backbone:
+            self.backbone.eval()
+            for p in self.backbone.parameters():
+                p.requires_grad = False
+
+    def forward(self, x):
+        return self.classifier(self.backbone(x))
+    
 
 class CombinedModel(nn.Module):
 
@@ -142,7 +163,7 @@ class CombinedModel(nn.Module):
         self.backbone = backbone
         self.classifier = classifier
         if freeze_backbone:
-            # self.backbone.eval()
+            self.backbone.eval()
             for p in self.backbone.parameters():
                 p.requires_grad = False
 
@@ -739,6 +760,47 @@ def train_settransformer(run_name: str,
         raise ValueError(f"Unknown mode: {mode}")
     
     _run_trainer(model, train_csv, test_csv, tube_type, run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
+
+
+@app.command()  
+def train_settransformer3tube(run_name: str,
+                         train_csv: str,
+                         test_csv: str, 
+                         mode: str = 'binary',
+                         fpst: bool = False, # set to true to use FPS-Transformer instead of SetTransformer
+                         dataroot: str = ".",
+                         labelkey: str = "label",
+                         batch_size: int = 16,
+                         epochs: int = 50,
+                         max_lr: float = 0.0002,
+                         num_classes: int = 1,
+                         events: int = 8192,
+                         positive_repeat_factor: int = 1,
+                         comet_workspace: str = None,
+                         comet_project: str = None):
+    
+    from dinoflow.compmodels.agg import MeanPool
+    from dinoflow.compmodels.graph_model import GINFPSST
+    torch.multiprocessing.set_sharing_strategy('file_system')
+    
+    assert mode in ('binary', 'multiclass', 'regression'), f"Unknown mode: {mode}"
+    model = CombinedModel3Tubes(
+        backbone=SetTransformer3Tube(dim_input=13, dim_hidden=128, num_heads=2, num_inds=128, hidden_layers=3, layer_norm=True, dim_output=128, fpst=fpst),
+        classifier=nn.Sequential(MeanPool(), ClassificationHead(128 * 3, num_classes=num_classes)),
+    )
+    model = model.to(DEVICE)
+    
+    if mode == 'binary':
+        model = BinaryClassificationModel(model, emit_predictions=True, max_lr=max_lr)
+    elif mode == 'multiclass':
+        model = ClassificationModel(model, num_classes=num_classes, emit_predictions=False, max_lr=max_lr)
+    elif mode == 'regression':
+        model = RegressionModel(model, emit_predictions=True, max_lr=max_lr)
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+     
+    _run_trainer(model, train_csv, test_csv, ["b", "t", "m"], run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
+
 
 
 @app.command()
