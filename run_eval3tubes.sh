@@ -27,7 +27,7 @@ export TORCH_NCCL_TRACE_BUFFER_SIZE=1 # This is for debugging NCCL issues
 #--batch-size 8 \ for L40 GPUS
 
 
-uv run src/dinoflow/eval.py train3tubes \
+uv run src/dinoflow/eval.py \
     $1 \
     /home/32210/test_things/lmd_conversion/updated_train_set_09052025_pb.csv \
     /home/32210/test_things/lmd_conversion/updated_test_set_09052025_pb.csv \
@@ -39,8 +39,8 @@ uv run src/dinoflow/eval.py train3tubes \
     --positive-repeat-factor 1 \
     --dataroot /mnt/ri_share/Data/flow_data/ \
     --events 16384 \
-    --max-lr 0.00025 \
-    --batch-size 16 \
+    --max-lr 0.0001 \
+    --batch-size 8 \
     --epochs 100 \
     --comet-workspace r-i \
     --comet-project dinoflow-action-required-sept2025 \
