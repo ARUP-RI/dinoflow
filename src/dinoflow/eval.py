@@ -200,5 +200,45 @@ def train3tubes(run_name, train_labels, test_labels,
     _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
     
 
+@app.command()
+def predict(checkpoint: str,
+            test_labels: str,
+            labelkey:str, 
+            dataroot: str = ".", 
+            events: int = 16384, 
+            batch_size: int = 16):
+    """
+    Predict the labels for the test set
+    """
+    # In the future we'll be able to load the modelconf from the checkpoint but older models dont save it
+    model, modelconf = load_btm_from_checkpoint(checkpoint, device=DEVICE)
+    model.eval().to(DEVICE)
+    
+    testdata = TubeData(test_labels, data_root=dataroot, labelkey=labelkey, tubes_to_return=["b", "t", "m"], events_to_return=int(events))
+    testloader = DataLoader(testdata, batch_size=batch_size, shuffle=False, num_workers=4)
+    logger.info(f"Loaded {len(testloader.dataset)} samples for test")
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    num_classes = modelconf['num_classes']
+    with torch.inference_mode():
+        print("index,accession,prediction,label")
+        for b, (batch, rowdict) in enumerate(testloader):
+            labels = rowdict['label']
+            i = 0
+            batch = {k : batch[k].to(DEVICE) for k in ["b", "t", "m"]}
+            preds = model(batch)
+            if num_classes == 1:
+                preds = F.sigmoid(preds)
+            else:
+                preds = F.softmax(preds, dim=1)
+            for p, l in zip(preds, labels):
+                idx = b * batch_size + i
+                if num_classes == 1:
+                    p = f"{p.item() :.4f}"
+                else:
+                    p = p.argmax(dim=0).item()
+                print(f"{idx},{rowdict['ACCESSION'][i]},{p},{labels[i]}")
+                i += 1
+
 if __name__ == "__main__":
     app()
