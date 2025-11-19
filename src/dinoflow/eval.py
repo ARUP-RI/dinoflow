@@ -3,9 +3,11 @@ import logging
 from functools import partial
 
 import typer
+import torch.nn as nn
+import yaml
 import pandas as pd
 import torch
-import torch.nn as nn
+import torch.nn.functional as F
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import CometLogger, CSVLogger
@@ -13,7 +15,7 @@ from pytorch_lightning.strategies import DDPStrategy
 
 from torch.utils.data import DataLoader
 
-from dinoflow.models import load_checkpoint, BTMTubes
+from dinoflow.models import load_checkpoint, BTMTubes, load_btm_from_checkpoint
 from dinoflow.data import TubeData, compose, shift, scale, noise
 from dinoflow.plmodels import BinaryClassificationModel, ClassificationModel, RegressionModel
 
@@ -24,6 +26,50 @@ app = typer.Typer(pretty_exceptions_show_locals=False)
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s]   %(levelname)s   %(message)s')
 
 logger = logging.getLogger(__name__)
+
+class ClassificationHead(nn.Module):
+    def __init__(self, num_features, num_classes, output_scale_factor=1.0):
+        super().__init__()
+        self.output_scale_factor = output_scale_factor
+        self.model_conf = {
+            'num_features': num_features,
+            'num_classes': num_classes,
+            'output_scale_factor': output_scale_factor,
+        }
+        self.layers = nn.Sequential(
+            nn.Linear(num_features, num_features),
+            nn.GELU(),
+            nn.Linear(num_features, num_classes),
+        )
+
+    def forward(self, x):
+        layer_dtype = self.layers[0].weight.dtype
+        if x.dtype != layer_dtype:
+            x = x.to(layer_dtype)
+        return self.layers(x) * self.output_scale_factor
+    
+
+class CombinedModel(nn.Module):
+
+    def __init__(self, backbone, classifier, freeze_backbone=False):
+        super().__init__()
+        if hasattr(backbone, 'model_conf'):
+            self.model_conf = backbone.model_conf
+        else:
+            self.model_conf = {"backbone_cls": backbone.__class__.__name__}
+        self.freeze_backbone = freeze_backbone
+        if hasattr(classifier, 'output_scale_factor'):
+            self.model_conf['output_scale_factor'] = classifier.output_scale_factor
+        self.backbone = backbone
+        self.classifier = classifier
+        if freeze_backbone:
+            # self.backbone.eval()
+            for p in self.backbone.parameters():
+                p.requires_grad = False
+
+    def forward(self, x):
+        return self.classifier(self.backbone(x.float()))
+
 
 
 def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor=1):
@@ -107,6 +153,84 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     trainer.fit(model, trainloader, valloader)
 
 
+
+@app.command()
+def train(run_name, train_labels, test_labels, 
+          backbone: str, 
+          conf: str, 
+          tube_type: str = "", 
+          dataroot: str = "/", 
+          positive_repeat_factor: int = 1, 
+          labelkey: str = "label", 
+          checkpoint: str = None, 
+          freeze_backbone: bool = False, 
+          freeze_backbone_layers: int = 0,
+          batch_size: int=16, 
+          events: int = 4096, 
+          epochs: int = 25, 
+          mode: str = 'binary',  # binary, multiclass, or regression
+          num_classes: int = 1,
+          comet_workspace: str = None,
+          comet_project: str = None):
+    """
+    Fine-tune a single-tube model on a new task
+    """
+    assert tube_type in ['b', 't', 'm'], f"Invalid tube type: {tube_type}"
+    # Helps with too many open files errors?
+    torch.multiprocessing.set_sharing_strategy('file_system')
+
+    logger.info(f"Loading backbone from {backbone}")
+    backbone, modelconf = load_checkpoint(backbone)
+    
+    classifier = ClassificationHead(backbone.cls_token.shape[-1], 
+                                    num_classes=1 if mode == 'binary' or mode == 'regression' else num_classes,
+                                    output_scale_factor=1.0 if mode == 'regression' else 1.0)
+    combined = CombinedModel(backbone, classifier, freeze_backbone=False)
+
+
+    if mode == 'binary':
+        model = BinaryClassificationModel(combined, emit_predictions=True, comet_project_name=comet_project)
+    elif mode == 'multiclass':
+        model = ClassificationModel(combined, num_classes=num_classes, emit_predictions=True, comet_project_name=comet_project)
+    elif mode == 'regression':
+        model = RegressionModel(combined, emit_predictions=True, comet_project_name=comet_project)
+        assert positive_repeat_factor == 1
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
+    with open(conf, 'r') as f:
+        conf = yaml.safe_load(f)
+
+    if checkpoint is not None:
+        logger.info(f"Loading full model checkpoint from {checkpoint}")
+        if mode == 'binary':
+            model = BinaryClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier)
+        elif mode == 'multiclass':
+            model = ClassificationModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier, num_classes=num_classes)
+        elif mode == 'regression':
+            model = RegressionModel.load_from_checkpoint(checkpoint, backbone=backbone, classifier=classifier)
+    
+    if freeze_backbone_layers > 0 and not freeze_backbone:
+        raise ValueError("freeze_backbone_layers > 0 requires freeze_backbone to be True")
+    if freeze_backbone:
+        if freeze_backbone_layers > 0:
+            for i in range(freeze_backbone_layers):
+                logger.info(f"Freezing backbone layer {i}")
+                combined.backbone.encoder.layers[i].eval()
+                for p in combined.backbone.encoder.layers[i].parameters():
+                    p.requires_grad = False
+        else:
+            logger.info("Freezing full backbone")
+            combined.backbone.eval() # freeze backbone
+            for p in combined.backbone.parameters():
+                p.requires_grad = False
+    else:
+        logger.info("Unfreezing backbone")
+        backbone.train()
+
+    _run_trainer(model, train_labels, test_labels, [tube_type], run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
+    
+
 @app.command()
 def train3tubes(run_name, train_labels, test_labels,
                 backbone_b: str, 
@@ -128,6 +252,9 @@ def train3tubes(run_name, train_labels, test_labels,
                 pos_weight: float = 1.0,
                 checkpoint_monitor: str = 'val_loss',
                 checkpoint_mode: str = 'min',):
+    """
+    Fine-tune a 3-tube model on a new task, staring from individual backbone checkpoints (probably trained with DinoFlow)
+    """
     # Helps with too many open files errors?
     torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -208,7 +335,7 @@ def predict(checkpoint: str,
             events: int = 16384, 
             batch_size: int = 16):
     """
-    Predict the labels for the test set
+    Run a 3-tube model on a test set
     """
     # In the future we'll be able to load the modelconf from the checkpoint but older models dont save it
     model, modelconf = load_btm_from_checkpoint(checkpoint, device=DEVICE)
