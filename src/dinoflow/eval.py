@@ -860,7 +860,7 @@ def predict(checkpoint: str,
             test_labels: str,
             labelkey:str, 
             dataroot: str = ".", 
-            events: int = 4096, 
+            events: int = 16384, 
             batch_size: int = 16):
     """
     Predict the labels for the test set
