@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from dinoflow!")
+__version__="0.1.0"
