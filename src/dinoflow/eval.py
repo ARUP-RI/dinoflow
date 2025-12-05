@@ -29,7 +29,7 @@ import numpy as np
 from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint, BTMTubes, load_btm_from_checkpoint, IlseBagModel, munge_state_dict
 from dinoflow.data import TubeData, collate_fn, compose, shift, scale, noise, standardize_range, CSVDataset
 from dinoflow import util
-from dinoflow.plmodels import BinaryClassificationModel, ClassificationModel, RegressionModel
+from dinoflow.plmodels import BinaryClassificationModel, ClassificationModel, RegressionModel, ContrastClassificationModel
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -128,26 +128,84 @@ class ClassificationHead(nn.Module):
         return self.layers(x) * self.output_scale_factor
     
 
+#class CombinedModel(nn.Module):
+
+    #def __init__(self, backbone, classifier, freeze_backbone=False):
+        #super().__init__()
+        #if hasattr(backbone, 'model_conf'):
+            #self.model_conf = backbone.model_conf
+        #else:
+            #self.model_conf = {"backbone_cls": backbone.__class__.__name__}
+        #self.freeze_backbone = freeze_backbone
+        #if hasattr(classifier, 'output_scale_factor'):
+            #self.model_conf['output_scale_factor'] = classifier.output_scale_factor
+        #self.backbone = backbone
+        #self.classifier = classifier
+        #if freeze_backbone:
+            # self.backbone.eval()
+            #for p in self.backbone.parameters():
+                #p.requires_grad = False
+        
+        # expose fused_dim so plmodels can use it
+        #if hasattr(backbone, "fused_dim"):
+            #self.fused_dim = backbone.fused_dim
+        #elif hasattr(backbone, "out_dim"):
+            #self.fused_dim = backbone.out_dim
+        #else:
+            #raise ValueError(
+                #"Backbone has no fused_dim or out_dim attribute — "
+                #"BTMTubes must define fused_dim before passing to CombinedModel."
+            #)
+
+    #def forward(self, x):
+        #return self.classifier(self.backbone(x.float()))
+
 class CombinedModel(nn.Module):
 
-    def __init__(self, backbone, classifier, freeze_backbone=False):
+    def __init__(self, backbone, classifier=None, freeze_backbone=True):
+        """
+        backbone: BTMTubes or any model that takes an eventdict {'b','t','m'} and returns a fused embedding (B, D)
+        classifier: optional classification head (ContrastClassificationHead)
+        freeze_backbone: whether to freeze backbone parameters
+        """
         super().__init__()
+
+        # store config if present
         if hasattr(backbone, 'model_conf'):
             self.model_conf = backbone.model_conf
         else:
             self.model_conf = {"backbone_cls": backbone.__class__.__name__}
-        self.freeze_backbone = freeze_backbone
-        if hasattr(classifier, 'output_scale_factor'):
-            self.model_conf['output_scale_factor'] = classifier.output_scale_factor
+
         self.backbone = backbone
         self.classifier = classifier
+        self.freeze_backbone = freeze_backbone
+
+        # freeze backbone if needed
         if freeze_backbone:
-            # self.backbone.eval()
             for p in self.backbone.parameters():
                 p.requires_grad = False
 
-    def forward(self, x):
-        return self.classifier(self.backbone(x.float()))
+        # expose fused_dim
+        if hasattr(backbone, "fused_dim"):
+            self.fused_dim = backbone.fused_dim
+        elif hasattr(backbone, "out_dim"):
+            self.fused_dim = backbone.out_dim
+        else:
+            raise ValueError(
+                "Backbone has no fused_dim or out_dim attribute — "
+                "BTMTubes must define fused_dim before passing to CombinedModel."
+            )
+
+    def forward(self, batch):
+        """
+        batch is a dict with keys 'b', 't', 'm'
+        Backbone returns (B, D_fused)
+        CombinedModel returns the fused embedding only.
+        The PL model will apply the head.
+        """
+        fused = self.backbone(batch) # (B, D)
+        return fused
+
 
     # def train(self, mode=True):
     #     super().train(mode)
@@ -169,6 +227,57 @@ class SOMCombinedModel(nn.Module):
         normed_projection = projection / np.sum(projection)
         return self.classifier(torch.tensor(normed_projection).float().to(DEVICE))
 
+class ContrastClassificationHead(nn.Module):
+    def __init__(
+        self,
+        num_features: int,
+        num_classes: int,
+        proj_dim: int = 384,
+        output_scale_factor: float = 1.0,
+    ):
+        super().__init__()
+
+        self.output_scale_factor = output_scale_factor
+
+        # For saving / logging config
+        self.model_conf = {
+            "num_features": num_features,
+            "num_classes": num_classes,
+            "proj_dim": proj_dim,
+            "output_scale_factor": output_scale_factor,
+        }
+
+        # Classification branch 
+        self.cls_layers = nn.Sequential(
+            nn.Linear(num_features, num_features),
+            nn.GELU(),
+            nn.Linear(num_features, num_classes),
+        )
+
+        # Maps raw flow features to contrastive embedding space
+        self.proj = nn.Linear(num_features, proj_dim)
+
+    def forward(self, x):
+        """
+        x: (B, num_features) backbone features
+
+        Returns:
+            logits: (B, num_classes)
+            z_flow:(B, proj_dim)  L2-normalized projection for flow 
+        """
+        layer_dtype = self.cls_layers[0].weight.dtype
+        if x.dtype != layer_dtype:
+            x = x.to(layer_dtype)
+
+        # Classification
+        logits = self.cls_layers(x) * self.output_scale_factor
+
+        # Flow/tube projection for contrastive loss
+        z_flow = self.proj(x)
+        z_flow = F.normalize(z_flow, dim=-1)  # (B, proj_dim)
+
+        return logits, z_flow
+
 
 def load_featmeans_stds(conf, tube_type):
     if tube_type == 't':
@@ -181,7 +290,7 @@ def load_featmeans_stds(conf, tube_type):
         raise ValueError(f"Unknown tube type: {tube_type}")
 
 
-def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor=1):
+def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, dataroot, textroot, report_key, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor=1):
     torch.set_float32_matmul_precision('medium')
 
     # Repeat rows in positive samples to balance the dataset
@@ -208,7 +317,7 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
     checkpoint_monitor_val = model.checkpoint_monitor.strip()
     checkpoint_monitor_mode = model.checkpoint_mode
     
-    traindata = TubeData(train_labels, tubes_to_return=tubes, events_to_return=int(events), data_root=dataroot, labelkey=labelkey, transforms=train_transforms)
+    traindata = TubeData(train_labels, tubes_to_return=tubes, events_to_return=int(events), data_root=dataroot, labelkey=labelkey, textroot=textroot, report_key=report_key, transforms=train_transforms)
     trainloader = DataLoader(traindata, batch_size=batch_size, shuffle=True, num_workers=8)
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
     
@@ -223,8 +332,8 @@ def _run_trainer(model, train_labels, test_labels, tubes, run_name, labelkey, da
 
     val_events = 1 * int(events)
     logger.info(f"Train events: {int(events)}, val events: {val_events}")
-    valdata = TubeData(test_labels, tubes_to_return=tubes, events_to_return=val_events, data_root=dataroot, labelkey=labelkey, transforms=val_transforms)
-    valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=4)
+    valdata = TubeData(test_labels, tubes_to_return=tubes, events_to_return=val_events, data_root=dataroot, labelkey=labelkey, textroot=textroot, report_key=report_key, transforms=val_transforms)
+    valloader = DataLoader(valdata, batch_size=batch_size, shuffle=False, num_workers=0)
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
     
     # Check if we have any positive samples for classification models in the validation set
@@ -350,9 +459,11 @@ def train3tubes(run_name, train_labels, test_labels,
                 backbone_t: str, 
                 backbone_m: str,
                 dataroot: str = "/",
+                textroot: str = "/",
                 positive_repeat_factor: int = 1,
                 labelkey: str = "label",
-                freeze_backbone: bool = False,
+                report_key: str = "text_emb",
+                freeze_backbone: bool = True,
                 freeze_backbone_layers: int = 0,
                 batch_size: int = 16,
                 events: int = 4096,
@@ -369,33 +480,45 @@ def train3tubes(run_name, train_labels, test_labels,
     t_backbone, _ = load_checkpoint(backbone_t)
     m_backbone, _ = load_checkpoint(backbone_m)
 
-
     output_classes = 1 if mode == 'binary' or mode == 'regression' else num_classes
     output_scale_factor = 2.0 if mode == 'regression' else 1.0
 
-    modelconf['output_classes'] = output_classes # Add it here so it can be saved in the checkpoint
-
-    btm = BTMTubes(num_features=13,
-                    model_embed_dim=modelconf['model_dim'],
-                    backbone_heads=modelconf['heads'],
-                    backbone_layers=modelconf['layers'],
-                    output_classes=output_classes,
-                    d_ff=modelconf['d_ff'],
-                    layer_type=modelconf['layer_type'],
-                    dropout=0.0,
-                    output_scale_factor=output_scale_factor,)
+    modelconf['output_classes'] = output_classes 
+    
+    btm = BTMTubes(
+        num_features=13,
+        model_embed_dim=modelconf['model_dim'],
+        backbone_heads=modelconf['heads'],
+        backbone_layers=modelconf['layers'],
+        output_classes=output_classes,
+        d_ff=modelconf['d_ff'],
+        layer_type=modelconf['layer_type'],
+        dropout=0.0,
+        output_scale_factor=output_scale_factor,
+        include_classifier=False, # now returns fused embedding
+    )
 
     btm.b_backbone = b_backbone
     btm.t_backbone = t_backbone
     btm.m_backbone = m_backbone
 
+    # classifier head on top of fused embedding
+    classifier = ContrastClassificationHead(
+        num_features=btm.fused_dim,  
+        num_classes=1 if mode in ('binary', 'regression') else num_classes,
+        output_scale_factor=1.0 if mode == 'regression' else 1.0,
+    )
 
+    combined = CombinedModel(btm, classifier, freeze_backbone=False)
+    
     if mode == 'binary':
-        model = BinaryClassificationModel(btm, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
+        model = BinaryClassificationModel(combined, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
     elif mode == 'multiclass':
-        model = ClassificationModel(btm, num_classes=num_classes, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
+        model = ClassificationModel(combined, num_classes=num_classes, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
     elif mode == 'regression':
-        model = RegressionModel(btm, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
+        model = RegressionModel(combined, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
+    elif mode == 'contrast-binary':
+        model = ContrastClassificationModel(combined, emit_predictions=False, ckpt_params=modelconf, max_lr=max_lr, comet_project_name=comet_project)
     else:
         raise ValueError(f"Unknown mode: {mode}")
     
@@ -431,7 +554,7 @@ def train3tubes(run_name, train_labels, test_labels,
         t_backbone.train()
         m_backbone.train()
    
-    _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, labelkey, dataroot, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
+    _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, labelkey, dataroot, textroot, report_key, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor)
     
     
 
