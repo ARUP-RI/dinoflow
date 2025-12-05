@@ -168,3 +168,45 @@ class SelfCosineSimLoss(nn.Module):
         # Compute mean of off-diagonal elements
         off_diagonal_mean = (S.sum() - S.diagonal().sum()) / (S.numel() - S.shape[0])
         return off_diagonal_mean
+
+class InfoNCELoss(nn.Module):
+    def __init__(self, temperature: float = 1.0, symmetric: bool = False, detach_second: bool = True):
+        super().__init__()
+        self.temperature = float(temperature)
+        self.symmetric = symmetric
+        self.detach_second = detach_second
+
+    def forward(self, z1, z2):
+        """
+        z1: [B, D] - e.g. flow projections (trainable)
+        z2: [B, D] - e.g. report/text embeddings (often frozen)
+        logit_scale: optional scalar tensor (exp(log_temp)) from the head.
+                     If None, use 1 / self.temperature.
+        """
+        # Optionally freeze second branch (text / reports)
+        if self.detach_second:
+            with torch.no_grad():
+                z2 = F.normalize(z2, dim=-1)
+        else:
+            z2 = F.normalize(z2, dim=-1)
+
+        # Normalize (safe even if already normalized)
+        z1 = F.normalize(z1, dim=-1)
+
+        # Similarity matrix
+        sim = z1 @ z2.T  # [B, B]
+
+        B = z1.size(0)
+        labels = torch.arange(B, device=z1.device)
+
+        # one-way: z1 -> z2 (flow to reports)
+        loss_12 = F.cross_entropy(sim, labels)
+
+        if not self.symmetric:
+            return loss_12
+
+        # symmetric: z2 -> z1 (reports to flow)
+        loss_21 = F.cross_entropy(sim.T, labels)
+        
+        return 0.5 * (loss_12 + loss_21)
+
