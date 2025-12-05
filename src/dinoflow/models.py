@@ -53,25 +53,28 @@ def load_btm_from_checkpoint(checkpoint: str, device=None):
     model.to(device)
     return model, modelconf
 
-
 def load_checkpoint(path, device=None):
-    """
-    Load a **backbone training** checkpoint from a file and return the tube encoder from the teacher
-    """
-    ckpt = torch.load(path, weights_only=False, map_location=device)
+    # ALWAYS load checkpoint on CPU — never CUDA here
+    ckpt = torch.load(path, weights_only=False, map_location="cpu")
     modelconf = ckpt['modelconf']
     logger.info(f"Loading model with config: {modelconf}")    
+    
+    # Create teacher on CPU
     teacher = TubeEncoderWithProjection(
-            num_features=modelconf['num_features'], 
-            model_embed_dim=modelconf['model_dim'], 
-            layers=modelconf['layers'],
-            d_ff=modelconf.get('d_ff', 2048),
-            heads=modelconf['heads'], 
-            hidden_dim=modelconf['hidden_dim'], 
-            projection_dim=modelconf['projection_dim'],
-            layer_type=modelconf.get("layer_type", "normal")).to(device)
+        num_features=modelconf['num_features'], 
+        model_embed_dim=modelconf['model_dim'], 
+        layers=modelconf['layers'],
+        d_ff=modelconf.get('d_ff', 2048),
+        heads=modelconf['heads'], 
+        hidden_dim=modelconf['hidden_dim'], 
+        projection_dim=modelconf['projection_dim'],
+        layer_type=modelconf.get("layer_type", "normal")
+    )
 
-    teacher.load_state_dict(ckpt['teacher'])
+    # Load CPU checkpoint into CPU model
+    teacher.load_state_dict(ckpt['teacher'], strict=True)
+
+    # Return CPU module — Lightning will move to CUDA later
     return teacher.tube_encoder, modelconf
 
 
@@ -202,12 +205,80 @@ class MLP(nn.Module):
         return y
 
 
+#class BTMTubes(nn.Module):
+    #"""
+    #Combines the B, T, and M backbones and generates a final prediction
+    #"""
+    #def __init__(self, num_features, model_embed_dim, backbone_heads, backbone_layers, output_classes, d_ff=2048, include_classifier=True, layer_type='swiglu', output_scale_factor=1.0, dropout=0.1):
+        #super().__init__()
+        #self.model_conf = {
+            #'num_features': num_features,
+            #'model_embed_dim': model_embed_dim,
+            #'backbone_heads': backbone_heads,
+            #'backbone_layers': backbone_layers,
+            #'output_classes': output_classes,
+            #'d_ff': d_ff,
+            #'layer_type': layer_type,
+            #'output_scale_factor': output_scale_factor
+        #}
+        #self.output_scale_factor = output_scale_factor
+        #self.b_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff, layer_type)
+        #self.t_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff, layer_type)
+        #self.m_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff, layer_type)
+        #self.include_classifier = include_classifier
+        #if include_classifier:
+            #self.b_dropout = nn.Dropout(dropout)
+            #self.t_dropout = nn.Dropout(dropout)
+            #self.m_dropout = nn.Dropout(dropout)
+            #self.b_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
+            #self.t_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
+            #self.m_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
+            #self.combined = nn.Sequential(
+                #nn.Linear(model_embed_dim * 3, model_embed_dim),
+                #nn.GELU(),
+                #nn.Linear(model_embed_dim, model_embed_dim),
+                #nn.GELU(),
+                #nn.Linear(model_embed_dim, output_classes),
+            #)
+
+    #def forward(self, eventdict):
+        #b_events = eventdict['b'].float()
+        #t_events = eventdict['t'].float()
+        #m_events = eventdict['m'].float()
+
+        #b_out = self.b_backbone(b_events)
+        #t_out = self.t_backbone(t_events)
+        #m_out = self.m_backbone(m_events)
+        #if self.include_classifier:
+            #b_out = self.b_mlp(self.b_dropout(b_out))
+            #t_out = self.t_mlp(self.t_dropout(t_out))
+            #m_out = self.m_mlp(self.m_dropout(m_out))            
+            #x = self.combined(torch.cat((b_out, t_out, m_out), dim=1)) * self.output_scale_factor
+        #else:
+            #x = torch.cat((b_out, t_out, m_out), dim=1) 
+        #return x
+
 class BTMTubes(nn.Module):
     """
-    Combines the B, T, and M backbones and generates a final prediction
+    Combines the B, T, and M backbones and produces either:
+      - a fused embedding (when include_classifier=False), or
+      - classifier logits (when include_classifier=True).
     """
-    def __init__(self, num_features, model_embed_dim, backbone_heads, backbone_layers, output_classes, d_ff=2048, include_classifier=True, layer_type='swiglu', output_scale_factor=1.0, dropout=0.1):
+    def __init__(
+        self,
+        num_features,
+        model_embed_dim,
+        backbone_heads,
+        backbone_layers,
+        output_classes,
+        d_ff=2048,
+        include_classifier=True,
+        layer_type='swiglu',
+        output_scale_factor=1.0,
+        dropout=0.1,
+    ):
         super().__init__()
+
         self.model_conf = {
             'num_features': num_features,
             'model_embed_dim': model_embed_dim,
@@ -216,45 +287,63 @@ class BTMTubes(nn.Module):
             'output_classes': output_classes,
             'd_ff': d_ff,
             'layer_type': layer_type,
-            'output_scale_factor': output_scale_factor
+            'output_scale_factor': output_scale_factor,
         }
         self.output_scale_factor = output_scale_factor
+        self.include_classifier = include_classifier
+
+        # tube encoders
         self.b_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff, layer_type)
         self.t_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff, layer_type)
         self.m_backbone = TubeEncoder(num_features, model_embed_dim, backbone_layers, backbone_heads, d_ff, layer_type)
-        self.include_classifier = include_classifier
+
+        # per-tube MLPs + dropout (always used now)
+        self.b_dropout = nn.Dropout(dropout)
+        self.t_dropout = nn.Dropout(dropout)
+        self.m_dropout = nn.Dropout(dropout)
+
+        self.b_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
+        self.t_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
+        self.m_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
+
+        # fusion MLP: (B, 3*D) → (B, D_fused)
+        self.fuse = nn.Sequential(
+            nn.Linear(model_embed_dim * 3, model_embed_dim),
+            nn.GELU(),
+            nn.Linear(model_embed_dim, model_embed_dim),
+            nn.GELU(),
+        )
+        self.fused_dim = model_embed_dim  # handy to know
+
+        # optional final classifier
         if include_classifier:
-            self.b_dropout = nn.Dropout(dropout)
-            self.t_dropout = nn.Dropout(dropout)
-            self.m_dropout = nn.Dropout(dropout)
-            self.b_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
-            self.t_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
-            self.m_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
-            self.combined = nn.Sequential(
-                nn.Linear(model_embed_dim * 3, model_embed_dim),
-                nn.GELU(),
-                nn.Linear(model_embed_dim, model_embed_dim),
-                nn.GELU(),
-                nn.Linear(model_embed_dim, output_classes),
-            )
+            self.classifier = nn.Linear(model_embed_dim, output_classes)
+        else:
+            self.classifier = None
 
     def forward(self, eventdict):
         b_events = eventdict['b'].float()
         t_events = eventdict['t'].float()
         m_events = eventdict['m'].float()
 
-        b_out = self.b_backbone(b_events)
-        t_out = self.t_backbone(t_events)
-        m_out = self.m_backbone(m_events)
-        if self.include_classifier:
-            b_out = self.b_mlp(self.b_dropout(b_out))
-            t_out = self.t_mlp(self.t_dropout(t_out))
-            m_out = self.m_mlp(self.m_dropout(m_out))            
-            x = self.combined(torch.cat((b_out, t_out, m_out), dim=1)) * self.output_scale_factor
-        else:
-            x = torch.cat((b_out, t_out, m_out), dim=1) 
-        return x
+        b_out = self.b_backbone(b_events)  # (B, D)
+        t_out = self.t_backbone(t_events)  # (B, D)
+        m_out = self.m_backbone(m_events)  # (B, D)
 
+        b_out = self.b_mlp(self.b_dropout(b_out))
+        t_out = self.t_mlp(self.t_dropout(t_out))
+        m_out = self.m_mlp(self.m_dropout(m_out))
+
+        # fuse B/T/M
+        cat = torch.cat((b_out, t_out, m_out), dim=1)    # (B, 3D)
+        fused = self.fuse(cat)                           # (B, D_fused)
+
+        if self.include_classifier and self.classifier is not None:
+            logits = self.classifier(fused) * self.output_scale_factor
+            return logits
+        else:
+            # return representation to be used by external heads
+            return fused
 
 
 class IlseBagEncoder(nn.Module):
