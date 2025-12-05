@@ -41,22 +41,22 @@ def normalize(x):
     return (x - mean.unsqueeze(1).expand(-1, x.shape[1], -1)) / std.unsqueeze(1).expand(-1, x.shape[1], -1)
 
 
-def bootstrap_events(x, prob=0.5, bootstrap_frac=0.5):
-    """
-    Randomly replace a fraction of the events with other randomly chosen events
-    Modifies in place! Use clone if you need the original tensor unmodified
-    """
-    r = torch.rand(x.shape[0])
-    for w in range(x.shape[0]):
-        if r[w] < prob:
-            num_to_replace = int(x.shape[1] * bootstrap_frac)
-            i = torch.randperm(x.shape[1])
-            replace_idx = i[0:num_to_replace]
-            remain_idx = i[num_to_replace:]
+#def bootstrap_events(x, prob=0.5, bootstrap_frac=0.5):
+    #"""
+    #Randomly replace a fraction of the events with other randomly chosen events
+    #Modifies in place! Use clone if you need the original tensor unmodified
+    #"""
+    #r = torch.rand(x.shape[0])
+    #for w in range(x.shape[0]):
+        #if r[w] < prob:
+            #num_to_replace = int(x.shape[1] * bootstrap_frac)
+            #i = torch.randperm(x.shape[1])
+            #replace_idx = i[0:num_to_replace]
+            #remain_idx = i[num_to_replace:]
             # Each replace_idx gets a number randomly chosen from remain_idx
-            rw = torch.randint(remain_idx.shape[0], (num_to_replace,)) #
-            x[w, replace_idx, :] = x[w, remain_idx[rw], :]
-    return x
+            #rw = torch.randint(remain_idx.shape[0], (num_to_replace,)) #
+            #x[w, replace_idx, :] = x[w, remain_idx[rw], :]
+    #return x
 
 
 def subsample_events(x, num_events):
@@ -372,7 +372,7 @@ class TubeData(Dataset):
     But if there's only one tube (e.g. tube_type="b"), then just the tube tensor is returned, not a dictionary
     """
 
-    def __init__(self, labelcsv, events_to_return=-1, data_root="/", tubes_to_return=["b", "t", "m"], labelkey="label", transforms=None):
+    def __init__(self, labelcsv, events_to_return=-1, data_root="/", tubes_to_return=["b", "t", "m"], labelkey="label", textroot="/", report_key="text_emb",transforms=None):
         if isinstance(labelcsv, str):
             self.data = pd.read_csv(labelcsv)
         else:
@@ -382,6 +382,14 @@ class TubeData(Dataset):
         self.events_to_return = events_to_return
         self.labelkey = labelkey
         self.transforms = transforms
+
+        self.report_key = report_key
+        self.text_root = Path(textroot) if textroot is not None else self.dataroot
+
+        if self.report_key is not None:
+            assert self.report_key in self.data.columns, \
+                f"{self.report_key} not in {self.data.columns}"
+    
 
     def __len__(self):
         return len(self.data)
@@ -426,6 +434,22 @@ class TubeData(Dataset):
 
         rowdict = row.to_dict()
         rowdict['label'] = label
+
+        # load and attach text embedding if requested 
+        if self.report_key is not None:
+            txt_path = row[self.report_key]
+            if isinstance(txt_path, str) and len(txt_path) > 0:
+                full_txt_path = self.text_root / txt_path
+                text_emb = torch.load(full_txt_path, map_location="cpu")
+                
+                # ensure it's 1D float tensor
+                if isinstance(text_emb, np.ndarray):
+                    text_emb = torch.from_numpy(text_emb)
+                text_emb = text_emb.float()
+                rowdict["text_emb"] = text_emb
+            else:
+                rowdict["text_emb"] = None
+        
         return tubes, rowdict
     
     def get_row_data(self, i):
@@ -450,11 +474,6 @@ def collate_fn(items):
     The NoLabelTubes dataset returns a list of tensors which may have different sizes, so we can't stack them
     """
     return items
-
-import pandas as pd
-from torch.utils.data import Dataset
-from PIL import Image
-from pathlib import Path
 
 import logging
 
