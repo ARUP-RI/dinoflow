@@ -39,8 +39,8 @@ uv run src/dinoflow/eval.py \
     --positive-repeat-factor 1 \
     --dataroot /mnt/ri_share/Data/flow_data/ \
     --events 16384 \
-    --max-lr 0.0001 \
-    --batch-size 8 \
+    --max-lr 0.00025 \
+    --batch-size 16 \
     --epochs 100 \
     --comet-workspace r-i \
     --comet-project dinoflow-action-required-sept2025 \

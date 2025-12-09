@@ -17,6 +17,37 @@ from dinoflow.models import BTMTubes, munge_state_dict
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def remap_tubes_to_standard(tubes_dict, tubes_to_return):
+    """
+    Remap custom tube names to standard 'b', 't', 'm' keys expected by the model.
+    
+    Args:
+        tubes_dict: Dictionary with custom tube names as keys
+        tubes_to_return: List of 3 tube names in order [b_name, t_name, m_name]
+    
+    Returns:
+        Dictionary with keys 'b', 't', 'm'
+    """
+    if len(tubes_to_return) != 3:
+        raise ValueError(f"Expected exactly 3 tubes, got {len(tubes_to_return)}")
+    
+    # Map the custom names to standard names
+    standard_mapping = {
+        tubes_to_return[0]: 'b',  # First tube -> 'b'
+        tubes_to_return[1]: 't',  # Second tube -> 't'
+        tubes_to_return[2]: 'm',  # Third tube -> 'm'
+    }
+    
+    # Create new dict with standard keys
+    remapped = {}
+    for custom_name, standard_name in standard_mapping.items():
+        if custom_name in tubes_dict:
+            remapped[standard_name] = tubes_dict[custom_name]
+        else:
+            raise KeyError(f"Expected tube '{custom_name}' not found in data. Available: {list(tubes_dict.keys())}")
+    
+    return remapped
+
 def subsample_events(x, num_events):
     """
     Select a random sample of events and return those.
@@ -186,7 +217,8 @@ def evaluate_with_plmetrics(
     num_subsamples: int = 1,
     batch_size: int = 8,
     device: str = None,
-    focus_accessions: list = None
+    focus_accessions: list = None,
+    tubes_to_return: list = ["b", "t", "m"]
 ):
     """
     Evaluate dataset and return both individual predictions and PLModels-style metrics
@@ -199,7 +231,7 @@ def evaluate_with_plmetrics(
         dataset_csv,
         events_to_return=-1,  # Don't subsample yet
         data_root=dataroot,
-        tubes_to_return=["b", "t", "m"],
+        tubes_to_return=tubes_to_return,
         labelkey=labelkey,
         transforms=None
     )
@@ -247,6 +279,9 @@ def evaluate_with_plmetrics(
                 tube: subsample_events(tube_data, events_per_sample)
                 for tube, tube_data in full_tubes.items()
             }
+
+            # Remap custom tube names to standard 'b', 't', 'm'
+            subsampled_tubes = remap_tubes_to_standard(subsampled_tubes, tubes_to_return)
             
             # Convert to batch format (batch size 1)
             batch = {tube: data.unsqueeze(0).to(device) for tube, data in subsampled_tubes.items()}
@@ -307,7 +342,7 @@ def main():
     parser.add_argument("--output-prefix", required=True, help="Prefix for output files")
     parser.add_argument("--device", default=None, help="Device to use (cuda/cpu)")
     parser.add_argument("--focus-accessions", nargs="+", help="Only evaluate specific accessions")
-    
+    parser.add_argument("--tubes", nargs=3, required=True, help="Tubes to return (must specify exactly 3 tube names, e.g., per_b_0_conv per_t_0_conv per_m_0_conv)")
     args = parser.parse_args()
     
     if args.device is None:
@@ -336,7 +371,8 @@ def main():
         num_subsamples=args.num_subsamples,
         batch_size=args.batch_size,
         device=device,
-        focus_accessions=args.focus_accessions
+        focus_accessions=args.focus_accessions,
+        tubes_to_return=args.tubes  
     )
     
     if len(predictions_df) == 0:
