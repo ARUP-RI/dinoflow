@@ -210,3 +210,73 @@ class InfoNCELoss(nn.Module):
         
         return 0.5 * (loss_12 + loss_21)
 
+class BinarySupervisedMultimodalContrastiveLoss(nn.Module):
+    """
+    Supervised multimodal contrastive loss for binary labels.
+
+    - Anchor: z_flow (B, D)
+    - Positives: z_rep[j] where labels[j] == labels[i]
+    - Negatives: z_rep[j] where labels[j] != labels[i]
+    """
+    def __init__(self, temperature: float = 0.07, eps: float = 1e-8):
+        super().__init__()
+        self.temperature = temperature
+        self.eps = eps
+
+    def forward(self, z_flow: torch.Tensor, z_rep: torch.Tensor, labels: torch.Tensor):
+        """
+        Args:
+            z_flow: (B, D) float tensor
+            z_rep:  (B, D) float tensor (already detached from text encoder)
+            labels: (B,)   int or bool tensor, values in {0,1} (action_required)
+        """
+        device = z_flow.device
+        B, D = z_flow.shape
+
+        # Normalize for cosine similarity
+        z_flow = F.normalize(z_flow, dim=-1)   # (B, D)
+        z_rep  = F.normalize(z_rep, dim=-1)    # (B, D)
+
+        # Similarity matrix: each row i = anchor z_flow[i] vs all z_rep[j]
+        logits = (z_flow @ z_rep.t()) / self.temperature   # (B, B)
+
+        # labels: (B,) → broadcast to (B,B) to compare anchor vs every text
+        labels = labels.view(B).to(device)
+        label_eq = labels.unsqueeze(1) == labels.unsqueeze(0)  # (B, B) bool
+
+        # For anchor i, positives are all j where label[j] == label[i]
+        # This includes j = i, so every row has at least one positive.
+        positive_mask = label_eq
+
+        # We don't need a "self mask" because flow and rep are different branches,
+        # but it's fine that i uses z_rep[i] as one of its positives.
+
+        # Numerical stability: subtract row-wise max
+        logits = logits - logits.max(dim=1, keepdim=True).values
+
+        exp_logits = torch.exp(logits)  # (B, B)
+
+        # Denominator for each anchor i: sum over ALL j
+        denom = exp_logits.sum(dim=1, keepdim=True) + self.eps  # (B, 1)
+
+        # Log-probabilities per pair
+        log_probs = logits - torch.log(denom)  # (B, B)
+
+        # Average log-prob over positives for each anchor
+        positive_mask_float = positive_mask.float()  # (B, B)
+        num_pos = positive_mask_float.sum(dim=1)     # (B,)
+
+        # Avoid division by zero if some row has no positives (shouldn't happen here)
+        # but we'll be safe anyway
+        valid = num_pos > 0
+        num_pos = torch.clamp(num_pos, min=1.0)
+
+        # Sum log_probs over positives, then divide by #positives per anchor
+        mean_log_prob_pos = (positive_mask_float * log_probs).sum(dim=1) / num_pos  # (B,)
+
+        # Final loss: average over anchors that have any positives
+        loss = -mean_log_prob_pos[valid].mean()
+
+        return loss
+
+
