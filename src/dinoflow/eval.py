@@ -232,7 +232,7 @@ class ContrastClassificationHead(nn.Module):
         self,
         num_features: int,
         num_classes: int,
-        proj_dim: int = 384,
+        proj_dim: int = 768,
         output_scale_factor: float = 1.0,
     ):
         super().__init__()
@@ -463,14 +463,14 @@ def train3tubes(run_name, train_labels, test_labels,
                 positive_repeat_factor: int = 1,
                 labelkey: str = "label",
                 report_key: str = "text_emb",
-                freeze_backbone: bool = True,
+                freeze_backbone: bool = False,
                 freeze_backbone_layers: int = 0,
                 batch_size: int = 16,
                 events: int = 4096,
                 epochs: int = 50,
                 mode: str = 'binary',
                 num_classes: int = 1,
-                max_lr: float = 0.0001,
+                max_lr: float = 0.00025,
                 comet_workspace: str = None,
                 comet_project: str = None,):
     # Helps with too many open files errors?
