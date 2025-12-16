@@ -24,18 +24,18 @@ export TORCH_NCCL_TRACE_BUFFER_SIZE=1 # This is for debugging NCCL issues
     
 uv run src/dinoflow/eval.py train3tubes \
     $1 \
-    /mnt/ri_share/Data/alexr/flow3/updated_train_set_09052025_withreports.csv \
-    /mnt/ri_share/Data/alexr/flow3/updated_test_set_09052025_withreports.csv \
+    /mnt/ri_share/Data/flow2/updated_train_set_09052025_pb_with_reports_for_alex.csv \
+    /mnt/ri_share/Data/flow2/updated_test_set_09052025_pb_with_reports_for_alex.csv \
     /mnt/ri_share/Data/flow2/dinoflow_checkpoints/b_sml_moreaug/b_sml_moreaug_epoch99.pt \
     /mnt/ri_share/Data/flow2/dinoflow_checkpoints/m_sml_moreaug/m_sml_moreaug_epoch99.pt \
     /mnt/ri_share/Data/flow2/dinoflow_checkpoints/t_sml_moreaug/t_sml_moreaug_epoch99.pt \
     --labelkey 'ACTION_REQUIRED' \
     --mode 'contrast-binary' \
-    --textroot /mnt/ri_share/Data/alexr/flow3/all-MiniLM-L6-v2_embs \
+    --textroot /mnt/ri_share/Data/alexr/flow3/all-mpnet-base-v2_embs \
     --dataroot /mnt/ri_share/Data/flow_data/ \
-    --events 8192 \
+    --events 16384 \
     --batch-size 16 \
-    --epochs 25 \
+    --epochs 100 \
     --comet-workspace "alex-rangel" \
     --comet-project "dinoflow" \
     # --freeze-backbone \
