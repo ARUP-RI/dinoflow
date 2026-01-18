@@ -23,6 +23,8 @@ dependencies = [
     "typer",
     "torch-geometric>=2.6.1",
     "einops>=0.8.1",
+    "ipykernel>=6.29.5",
+    "seaborn>=0.13.2",
 ]
 
 [project.optional-dependencies]
@@ -37,7 +39,7 @@ eval = [
     # "umap-learn>=0.5.7",  # requires something which requires python 3.10 only
 ]
 geometric = [
-    "torch-cluster @ https://data.pyg.org/whl/torch-2.7.0+cu128/torch_cluster-1.6.3%2Bpt27cu128-cp312-cp312-linux_x86_64.whl",
+  #  "torch-cluster @ https://data.pyg.org/whl/torch-2.7.0+cu128/torch_cluster-1.6.3%2Bpt27cu128-cp312-cp312-linux_x86_64.whl",
 ]
 
 [project.scripts]

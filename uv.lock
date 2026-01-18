@@ -279,6 +279,7 @@ source = { editable = "." }
 dependencies = [
     { name = "comet-ml" },
     { name = "einops" },
+    { name = "ipykernel" },
     { name = "ipython" },
     { name = "matplotlib" },
     { name = "numpy" },
@@ -288,6 +289,7 @@ dependencies = [
     { name = "rich" },
     { name = "scikit-learn" },
     { name = "scipy" },
+    { name = "seaborn" },
     { name = "torch" },
     { name = "torch-geometric" },
     { name = "torchmetrics" },
@@ -300,9 +302,6 @@ eval = [
     { name = "ipykernel" },
     { name = "seaborn" },
 ]
-geometric = [
-    { name = "torch-cluster" },
-]
 som = [
     { name = "jax", extra = ["cuda12"] },
     { name = "scikit-image" },
@@ -313,6 +312,7 @@ requires-dist = [
     { name = "altair", marker = "extra == 'eval'", specifier = ">=5.5.0" },
     { name = "comet-ml", specifier = ">=3.49.0" },
     { name = "einops", specifier = ">=0.8.1" },
+    { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "ipykernel", marker = "extra == 'eval'", specifier = ">=6.29.5" },
     { name = "ipython", specifier = ">=8.18.1" },
     { name = "jax", extras = ["cuda12"], marker = "extra == 'som'", specifier = ">=0.5" },
@@ -325,9 +325,9 @@ requires-dist = [
     { name = "scikit-image", marker = "extra == 'som'", specifier = ">=0.24.0" },
     { name = "scikit-learn" },
     { name = "scipy" },
+    { name = "seaborn", specifier = ">=0.13.2" },
     { name = "seaborn", marker = "extra == 'eval'", specifier = ">=0.13.2" },
     { name = "torch", specifier = ">=2.6.0" },
-    { name = "torch-cluster", marker = "extra == 'geometric'", url = "https://data.pyg.org/whl/torch-2.7.0+cu128/torch_cluster-1.6.3%2Bpt27cu128-cp312-cp312-linux_x86_64.whl" },
     { name = "torch-geometric", specifier = ">=2.6.1" },
     { name = "torchmetrics", specifier = ">=1.6.1" },
     { name = "typer" },
@@ -1670,24 +1670,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/56/7e/67c3fe2b8c33f40af06326a3d6ae7776b3e3a01daa8f71d125d78594d874/torch-2.7.1-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:c33360cfc2edd976c2633b3b66c769bdcbbf0e0b6550606d188431c81e7dd1fc", size = 821025792 },
     { url = "https://files.pythonhosted.org/packages/a1/37/a37495502bc7a23bf34f89584fa5a78e25bae7b8da513bc1b8f97afb7009/torch-2.7.1-cp312-cp312-win_amd64.whl", hash = "sha256:d8bf6e1856ddd1807e79dc57e54d3335f2b62e6f316ed13ed3ecfe1fc1df3d8b", size = 216050349 },
     { url = "https://files.pythonhosted.org/packages/3a/60/04b77281c730bb13460628e518c52721257814ac6c298acd25757f6a175c/torch-2.7.1-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:787687087412c4bd68d315e39bc1223f08aae1d16a9e9771d95eabbb04ae98fb", size = 68645146 },
-]
-
-[[package]]
-name = "torch-cluster"
-version = "1.6.3+pt27cu128"
-source = { url = "https://data.pyg.org/whl/torch-2.7.0+cu128/torch_cluster-1.6.3%2Bpt27cu128-cp312-cp312-linux_x86_64.whl" }
-dependencies = [
-    { name = "scipy" },
-]
-wheels = [
-    { url = "https://data.pyg.org/whl/torch-2.7.0+cu128/torch_cluster-1.6.3%2Bpt27cu128-cp312-cp312-linux_x86_64.whl", hash = "sha256:eb42ac6afff68cf4e1b32e6d1e6d1915149ec9fffbcdc3a652475261a676446e" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pytest", marker = "extra == 'test'" },
-    { name = "pytest-cov", marker = "extra == 'test'" },
-    { name = "scipy" },
 ]
 
 [[package]]

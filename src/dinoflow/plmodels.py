@@ -4,6 +4,7 @@ from torchmetrics import MeanMetric, MeanSquaredError, MeanAbsoluteError, R2Scor
 from torchmetrics.classification import BinaryAccuracy
 from torchmetrics.aggregation import MeanMetric, SumMetric
 import torch.nn.functional as F
+import logging
 
 from sklearn.metrics import roc_curve, precision_recall_curve, auc, average_precision_score
 import numpy as np
@@ -11,14 +12,23 @@ import matplotlib.pyplot as plt
 from pytorch_lightning.loggers import CometLogger
 from dinoflow import util
 
+logger = logging.getLogger(__name__)
+
 class BinaryClassificationModel(pl.LightningModule):
-    def __init__(self, model, min_lr=0.00001, max_lr=0.00025, warmup_iters=10, lr_decay_iters=80, emit_predictions=False, ckpt_params=None, num_classes=1, comet_project_name=None, freeze_encoder_iters=0):
+    
+    def __init__(self, model, 
+                min_lr=0.00001, max_lr=0.0005, warmup_iters=10, lr_decay_iters=120, 
+                emit_predictions=False, ckpt_params=None, num_classes=1, comet_project_name=None, freeze_encoder_iters=0,
+                predict_sampletype=True, backbone_warmup_iters=None):
         super().__init__()
         assert num_classes==1, "Only one class permitted for binary"
         self.model = model #
         self.min_lr = min_lr
         self.max_lr = max_lr
+        self.backbone_lr_factor = 0.2
         self.warmup_iters = warmup_iters
+        # If backbone_warmup_iters is None, use the same as warmup_iters
+        self.backbone_warmup_iters = backbone_warmup_iters if backbone_warmup_iters is not None else warmup_iters
         self.lr_decay_iters = lr_decay_iters
         self.freeze_encoder_iters = freeze_encoder_iters
         self.accuracy = BinaryAccuracy()
@@ -26,6 +36,8 @@ class BinaryClassificationModel(pl.LightningModule):
         self.validation_loss_mean = MeanMetric()
         self.emit_predictions = emit_predictions
         self.comet_project_name = comet_project_name
+        self.predict_sampletype = predict_sampletype
+        self.sampletype_loss_weight = 0.5
         # These are the thresholds at which we compute vthe sensitivity
         # Probably best not to change them
         self.fpr_thresholds = [0.01, 0.02, 0.05]
@@ -43,6 +55,8 @@ class BinaryClassificationModel(pl.LightningModule):
         # Lists to collect predictions and labels
         self.val_preds = []
         self.val_labels = []
+        self.val_sampletype_labels = []
+        self.val_sampletype_preds = []
 
     def forward(self, x):
         return self.model(x)
@@ -50,8 +64,11 @@ class BinaryClassificationModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, rowinfo = batch
         labels = rowinfo['label']
-        preds = self(x)
-        loss = torch.nn.functional.binary_cross_entropy_with_logits(preds.squeeze(1), labels.float())
+        sampletype_labels = rowinfo['PERIPHERAL BLOOD']
+        preds, sampletype_preds = self(x)
+        orig_loss = torch.nn.functional.binary_cross_entropy_with_logits(preds.squeeze(1), labels.float())
+        sampletype_loss = torch.nn.functional.binary_cross_entropy_with_logits(sampletype_preds.squeeze(1), sampletype_labels.float())
+        loss = orig_loss + self.sampletype_loss_weight * sampletype_loss
         self.training_loss_mean.update(loss)
         return loss
     
@@ -59,24 +76,27 @@ class BinaryClassificationModel(pl.LightningModule):
         # Clear the lists at the start of validation
         self.val_preds = []
         self.val_labels = []
+        self.val_sampletype_labels = []
+        self.val_sampletype_preds = []
     
     def validation_step(self, batch, batch_idx):
         x, rowinfo = batch
         labels = rowinfo['label']
         accs = rowinfo['ACCESSION']
+        sampletype_labels = rowinfo['PERIPHERAL BLOOD']
         
-        
-        # backbone_reps = self.model.backbone(x.float())
-        # logits = self.model.classifier(backbone_reps).squeeze(1)
-        logits = self(x)
+        logits, sampletype_logits = self(x)
         preds = torch.sigmoid(logits.squeeze(1))
+        sampletype_preds = torch.sigmoid(sampletype_logits.squeeze(1))
         
-        loss = torch.nn.functional.binary_cross_entropy_with_logits(logits.squeeze(1), labels.float())
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(logits.squeeze(1), labels.float()) + self.sampletype_loss_weight * torch.nn.functional.binary_cross_entropy_with_logits(sampletype_logits.squeeze(1), sampletype_labels.float())
         
         # Store predictions and labels for later use
         self.val_preds.append(preds.detach().float())
         self.val_labels.append(labels.detach().float())
-        
+        self.val_sampletype_labels.append(sampletype_labels.detach().float())
+        self.val_sampletype_preds.append(sampletype_preds.detach().float())
+
         if self.emit_predictions:
             for p, l, a in zip(preds, labels, accs):
                 if l == 1 or p.item() > 0.5:
@@ -87,7 +107,7 @@ class BinaryClassificationModel(pl.LightningModule):
 
     def on_validation_epoch_end(self):
         lrsched = self.lr_schedulers()
-        lr = lrsched.get_last_lr()[0]
+        backbone_lr, lr = lrsched.get_last_lr()
         accuracy = self.accuracy.compute()
         
         # Gather predictions and labels from all processes
@@ -95,16 +115,24 @@ class BinaryClassificationModel(pl.LightningModule):
             # For distributed training
             gathered_preds = self.all_gather(torch.cat(self.val_preds).float()).flatten()
             gathered_labels = self.all_gather(torch.cat(self.val_labels).int()).flatten()
+            gathered_sampletype_preds = self.all_gather(torch.cat(self.val_sampletype_preds).float()).flatten()
+            gathered_sampletype_labels = self.all_gather(torch.cat(self.val_sampletype_labels).int()).flatten()
             
             # Reshape if needed
             if gathered_preds.dim() > 2:
                 gathered_preds = gathered_preds.reshape(-1)
             if gathered_labels.dim() > 2:
                 gathered_labels = gathered_labels.reshape(-1)
+            if gathered_sampletype_preds.dim() > 2:
+                gathered_sampletype_preds = gathered_sampletype_preds.reshape(-1)
+            if gathered_sampletype_labels.dim() > 2:
+                gathered_sampletype_labels = gathered_sampletype_labels.reshape(-1)
         else:
             # For single process
             gathered_preds = torch.cat(self.val_preds).float()
             gathered_labels = torch.cat(self.val_labels).int()
+            gathered_sampletype_preds = torch.cat(self.val_sampletype_preds).float()
+            gathered_sampletype_labels = torch.cat(self.val_sampletype_labels).int()
 
 
         # These get set in the main process, but for logging we are required to do that in every process, so set
@@ -172,6 +200,30 @@ class BinaryClassificationModel(pl.LightningModule):
             self.logger.experiment.log_figure(figure=fig, figure_name="PR_Curve", step=self.current_epoch)
             plt.close(fig)
 
+        # Compute precision and recall for sampletype prediction (using 0.5 threshold)
+        sampletype_precision = float("NaN")
+        sampletype_recall = float("NaN")
+        if self.trainer.is_global_zero:
+            sampletype_preds_binary = (gathered_sampletype_preds >= 0.5).cpu().numpy()
+            sampletype_labels_np = gathered_sampletype_labels.cpu().numpy()
+            
+            # True positives, false positives, false negatives
+            tp = np.sum((sampletype_preds_binary == 1) & (sampletype_labels_np == 1))
+            fp = np.sum((sampletype_preds_binary == 1) & (sampletype_labels_np == 0))
+            fn = np.sum((sampletype_preds_binary == 0) & (sampletype_labels_np == 1))
+            
+            # Precision: TP / (TP + FP)
+            if (tp + fp) > 0:
+                sampletype_precision = tp / (tp + fp)
+            else:
+                sampletype_precision = 0.0
+            
+            # Recall: TP / (TP + FN)
+            if (tp + fn) > 0:
+                sampletype_recall = tp / (tp + fn)
+            else:
+                sampletype_recall = 0.0
+
         # We only want to log these from the main process (where self.trainer.is_global_zero is true), and it will hang
         # if we have sync_dict=True since we are not syncing anything across processes here
         self.log('recall', best_recall)
@@ -188,11 +240,16 @@ class BinaryClassificationModel(pl.LightningModule):
         else:
             self.log('auprc', float("NaN"))
 
+        # Log sampletype precision and recall
+        self.log('sampletype_precision', sampletype_precision)
+        self.log('sampletype_recall', sampletype_recall)
+
         # Process syncing is handled by lightning for these, and we want sync_dist=True to make sure things are synced across processes 
         self.log('accuracy', accuracy, sync_dist=True)
         self.log('val_loss', self.validation_loss_mean.compute(), sync_dist=True)
         self.log('training_loss', self.training_loss_mean.compute(), sync_dist=True)
         self.log('learning_rate', lr)
+        self.log('backbone_learning_rate', backbone_lr)
     
         self.accuracy.reset()
 
@@ -208,17 +265,29 @@ class BinaryClassificationModel(pl.LightningModule):
                 other_params.append(param)
         
         # Create optimizer with parameter groups
+        # Order matters: we'll track which indices are backbone vs other for the scheduler
         param_groups = []
+        param_group_settings = []  # (max_lr, min_lr, warmup_iters) for each group
+        
         if encoder_params:
             param_groups.append({'params': encoder_params, 'name': 'encoder_backbone'})
+            # Backbone uses scaled learning rates and potentially different warmup
+            param_group_settings.append((
+                self.max_lr * self.backbone_lr_factor, 
+                self.min_lr * self.backbone_lr_factor,
+                self.backbone_warmup_iters
+            ))
         if other_params:
             param_groups.append({'params': other_params, 'name': 'other'})
+            # Other params use full learning rates
+            param_group_settings.append((self.max_lr, self.min_lr, self.warmup_iters))
         
         # If no parameter groups were created (fallback), use all parameters
         if not param_groups:
             param_groups = [{'params': self.model.parameters(), 'name': 'all'}]
+            param_group_settings = [(self.max_lr, self.min_lr, self.warmup_iters)]
         
-        optimizer = torch.optim.AdamW(param_groups, lr=0.001, weight_decay=0.001)
+        optimizer = torch.optim.AdamW(param_groups, lr=0.001, weight_decay=0.01)
         
         # Choose scheduler based on freeze_encoder_iters
         if self.freeze_encoder_iters > 0:
@@ -227,8 +296,10 @@ class BinaryClassificationModel(pl.LightningModule):
                 self.lr_decay_iters, self.freeze_encoder_iters
             )
         else:
-            lrschedule = util.WarmupCosineLRScheduler(
-                optimizer, self.max_lr, self.min_lr, self.warmup_iters, self.lr_decay_iters
+            # Use PerGroupWarmupCosineLRScheduler to apply different LR schedules
+            # to backbone vs other param groups
+            lrschedule = util.PerGroupWarmupCosineLRScheduler(
+                optimizer, param_group_settings, self.lr_decay_iters
             )
         
         return [optimizer], [lrschedule]

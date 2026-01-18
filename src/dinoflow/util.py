@@ -130,6 +130,60 @@ def munge_label_df(labelcsv):
     return bertp
 
 
+class PerGroupWarmupCosineLRScheduler(LRScheduler):
+    """ A learning rate schedule that applies WarmupCosine schedules to different param groups
+    with different max_lr, min_lr, and warmup_iters values. 
+    
+    param_group_settings should be a list of (max_lr, min_lr, warmup_iters) tuples, one per param group.
+    """
+
+    def __init__(self, optimizer, param_group_settings, lr_decay_iters):
+        """
+        Args:
+            optimizer: The optimizer
+            param_group_settings: List of (max_lr, min_lr, warmup_iters) tuples, one per param group
+            lr_decay_iters: Number of iterations for LR decay
+        """
+        self.optimizer = optimizer
+        self.param_group_settings = param_group_settings
+        self.lr_decay_iters = lr_decay_iters
+        self.last_lr = [float("NaN")] * len(param_group_settings)
+        
+        assert len(param_group_settings) == len(optimizer.param_groups), \
+            f"param_group_settings length ({len(param_group_settings)}) must match number of param groups ({len(optimizer.param_groups)})"
+        
+        super().__init__(optimizer)
+
+    def set_iters(self, iters):
+        self._step_count = iters
+
+    def get_last_lr(self):
+        return self.last_lr
+    
+    def get_lr(self):
+        """
+        Compute LR for each param group based on its own max_lr/min_lr/warmup_iters
+        """
+        lrs = []
+        for i, (max_lr, min_lr, warmup_iters) in enumerate(self.param_group_settings):
+            # 1) linear warmup for warmup_iters steps
+            if self._step_count < warmup_iters:
+                lr = max_lr * (self._step_count + 1) / (warmup_iters)
+            # 2) if it > lr_decay_iters, return min learning rate
+            elif self._step_count > self.lr_decay_iters:
+                lr = min_lr
+            else:
+                # 3) in between, use cosine decay down to min learning rate
+                decay_ratio = (self._step_count - warmup_iters) / (self.lr_decay_iters - warmup_iters)
+                assert 0 <= decay_ratio <= 1
+                coeff = 0.5 * (1.0 + np.cos(np.pi * decay_ratio))  # coeff ranges 0..1
+                lr = min_lr + coeff * (max_lr - min_lr)
+            lrs.append(lr)
+        
+        self.last_lr = lrs
+        return lrs
+
+
 class FreezeEncoderWarmupCosineLRScheduler(LRScheduler):
     """ A learning rate schedule that freezes encoder/backbone components for freeze_iters,
     then increases linearly from 0 to max_lr over warmup_iters, then decreases using cosine 
