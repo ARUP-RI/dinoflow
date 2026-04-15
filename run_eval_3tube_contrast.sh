@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-export CUDA_VISIBLE_DEVICES=4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 
 export OMP_NUM_THREADS=8
@@ -22,7 +22,7 @@ export TORCH_NCCL_TRACE_BUFFER_SIZE=1 # This is for debugging NCCL issues
 #    /home/22319/data/brendan/dinoflow/viabs_250304_test_with_projections.csv \
 # Batch size 128
     
-uv run src/dinoflow/eval_contrast.py train3tubes \
+uv run src/dinoflow/eval.py train3tubes \
     $1 \
     /mnt/ri_share/Data/flow2/updated_train_set_09052025_pb_with_reports_for_alex.csv \
     /mnt/ri_share/Data/flow2/updated_test_set_09052025_pb_with_reports_for_alex.csv \
@@ -31,7 +31,7 @@ uv run src/dinoflow/eval_contrast.py train3tubes \
     /mnt/ri_share/Data/flow2/dinoflow_checkpoints/t_sml_moreaug/t_sml_moreaug_epoch99.pt \
     --labelkey 'ACTION_REQUIRED' \
     --mode 'contrast-binary' \
-    --textroot /mnt/ri_share/Data/alexr/flow3/embeddinggemma-300m-medical_embs \
+    --textroot /mnt/ri_share/Data/alexr/flow3/bge-m3_embs\
     --dataroot /mnt/ri_share/Data/flow_data/ \
     --events 16384 \
     --batch-size 16 \

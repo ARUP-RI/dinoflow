@@ -302,9 +302,9 @@ class BTMTubes(nn.Module):
         self.t_dropout = nn.Dropout(dropout)
         self.m_dropout = nn.Dropout(dropout)
 
-        self.b_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
-        self.t_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
-        self.m_mlp = MLP(model_embed_dim, model_embed_dim, model_embed_dim, n_layers=2, residual=True)
+        self.b_mlp = MLP(model_embed_dim, hidden_dim=model_embed_dim, n_layers=2)
+        self.t_mlp = MLP(model_embed_dim, hidden_dim=model_embed_dim, n_layers=2)
+        self.m_mlp = MLP(model_embed_dim, hidden_dim=model_embed_dim, n_layers=2)
 
         # fusion MLP: (B, 3*D) → (B, D_fused)
         self.fuse = nn.Sequential(
@@ -313,7 +313,7 @@ class BTMTubes(nn.Module):
             nn.Linear(model_embed_dim, model_embed_dim),
             nn.GELU(),
         )
-        self.fused_dim = model_embed_dim  # handy to know
+        self.fused_dim = model_embed_dim 
 
         # optional final classifier
         if include_classifier:
@@ -339,11 +339,13 @@ class BTMTubes(nn.Module):
         fused = self.fuse(cat)                           # (B, D_fused)
 
         if self.include_classifier and self.classifier is not None:
-            logits = self.classifier(fused) * self.output_scale_factor
+            logits = self.classifier(fused) * self. output_scale_factor
             return logits
         else:
             # return representation to be used by external heads
             return fused
+        
+    
 
 
 class IlseBagEncoder(nn.Module):
@@ -498,3 +500,191 @@ if __name__=="__main__":
     x = torch.randn(32, 10, 13)
     y = t(x)
     print(y.shape)
+
+
+#class MLP(nn.Module):
+    #def __init__(
+        #self,
+        #in_dim: int,
+        #hidden_dim: int = 256,
+        #n_layers: int = 2, # number of hidden Linear blocks
+        #drop: float = 0.1,
+        #use_ln: bool = True,
+    #):
+        #super().__init__()
+        #layers = []
+        #d = in_dim
+
+        #for _ in range(n_layers):
+            #layers.append(nn.Linear(d, hidden_dim))
+            #if use_ln:
+                #layers.append(nn.LayerNorm(hidden_dim))
+            #layers += [nn.GELU(), nn.Dropout(drop)]
+            #d = hidden_dim
+
+        #self.net = nn.Sequential(*layers)
+        #self.out_dim = d
+
+    #def forward(self, x):
+        #return self.net(x)
+
+
+#class Head(nn.Module):
+    #def __init__(
+        #self,
+        #in_dim: int,
+        #out_dim: int,
+        #hidden_dim: int = 256,
+        #n_layers: int = 2,
+        #drop: float = 0.1,
+        #use_ln: bool = True,
+    #):
+        #super().__init__()
+        #self.body = MLP(
+            #in_dim=in_dim,
+            #hidden_dim=hidden_dim,
+            #n_layers=n_layers,
+            #drop=drop,
+            #use_ln=use_ln,
+        #)
+        #self.out = nn.Linear(self.body.out_dim, out_dim)
+
+    #def forward(self, z):
+        #return self.out(self.body(z))
+
+
+#class FlowMultiTaskModel(nn.Module):
+    #def __init__(self, encoder: BTMTubes, task_defs: dict, head_cfg: dict | None = None):
+        #super().__init__()
+        #self.encoder = encoder
+        #self.task_defs = task_defs
+        #self.heads = nn.ModuleDict()
+        #head_cfg = head_cfg or {}
+
+        #D = encoder.fused_dim
+
+        #for task, cfg in task_defs.items():
+            #out_dim = int(cfg["out_dim"])
+            #if cfg["type"] == "ordinal":
+                #out_dim -= 1  # K-1 logits
+
+            # defaults
+            #hcfg = head_cfg.get(task, {})
+            #hidden_dim = int(hcfg.get("hidden_dim", 256))
+            #n_layers = int(hcfg.get("n_layers", 2))
+            #drop = float(hcfg.get("drop", 0.1))
+            #use_ln = bool(hcfg.get("use_ln", True))
+
+            #self.heads[task] = Head(
+                #in_dim=D,
+                #out_dim=out_dim,
+                #hidden_dim=hidden_dim,
+                #n_layers=n_layers,
+                #drop=drop,
+                #use_ln=use_ln,
+            #)
+
+    #def forward(self, eventdict):
+        #fused = self.encoder(eventdict)  # (B, D)
+        #return {t: head(fused) for t, head in self.heads.items()}
+
+class MLP(nn.Module):
+    def __init__(self, in_dim, hidden_dim=256, n_layers=2, drop=0.1, use_ln=True):
+        super().__init__()
+        layers = []
+        d = in_dim
+        for _ in range(n_layers):
+            layers.append(nn.Linear(d, hidden_dim))
+            if use_ln:
+                layers.append(nn.LayerNorm(hidden_dim))
+            layers += [nn.GELU(), nn.Dropout(drop)]
+            d = hidden_dim
+        self.net = nn.Sequential(*layers)
+        self.out_dim = d
+
+    def forward(self, x):
+        return self.net(x)
+
+class FlowMultiTaskModel(nn.Module):
+    """
+    Multi-task head over a shared encoder: encoder -> shared trunk MLP -> per-task linear heads.
+    Each task gets one Linear(trunk.out_dim, out_dim). Ordinal tasks use out_dim - 1 logits (K-1).
+
+    Regression tasks (type ``reg``) may set ``output_scale`` in task_defs (default 1.0). Predictions
+    are ``head(z) * output_scale`` (e.g. scale 100 so the linear layer targets a ~[-1, 1] range for
+    0–100% labels).
+    """
+
+    def __init__(
+        self,
+        encoder: nn.Module,
+        task_defs: dict,
+        trunk_cfg: dict | None = None,
+        init_head_scale: float | None = 0.02,
+    ):
+        super().__init__()
+        self.encoder = encoder
+        self.task_defs = dict(task_defs)
+
+        if not self.task_defs:
+            raise ValueError("task_defs must be non-empty")
+
+        for task, cfg in self.task_defs.items():
+            if "type" not in cfg or "out_dim" not in cfg:
+                raise ValueError(f"task_defs['{task}'] must have 'type' and 'out_dim'")
+
+        D = getattr(encoder, "fused_dim", None)
+        if D is None:
+            raise ValueError("encoder must have a fused_dim attribute")
+
+        trunk_cfg = trunk_cfg or {}
+        self.trunk = MLP(
+            in_dim=D,
+            hidden_dim=int(trunk_cfg.get("hidden_dim", 256)),
+            n_layers=int(trunk_cfg.get("n_layers", 2)),
+            drop=float(trunk_cfg.get("drop", 0.1)),
+            use_ln=bool(trunk_cfg.get("use_ln", True)),
+        )
+
+        self.outs = nn.ModuleDict()
+        for task, cfg in self.task_defs.items():
+            out_dim = int(cfg["out_dim"])
+            if cfg["type"] == "ordinal":
+                out_dim -= 1  # K-1 logits for CORAL
+            self.outs[task] = nn.Linear(self.trunk.out_dim, out_dim)
+
+        self._out_dims = {t: self.outs[t].out_features for t in self.outs}
+
+        # Per-reg-task output scale: pred = head(z) * scale (not in state_dict; set via task_defs / yaml)
+        self._reg_output_scale: dict[str, float] = {}
+        for task, cfg in self.task_defs.items():
+            if str(cfg.get("type", "")).lower() != "reg":
+                continue
+            self._reg_output_scale[task] = float(cfg.get("output_scale", 1.0))
+
+        # Optional small init on head outputs so early training isn't dominated by large logits
+        if init_head_scale is not None:
+            for head in self.outs.values():
+                nn.init.normal_(head.weight, mean=0.0, std=init_head_scale)
+                if head.bias is not None:
+                    nn.init.zeros_(head.bias)
+
+    def get_output_dim(self, task: str) -> int:
+        """Return output size for a task (number of logits / regression dim)."""
+        return self._out_dims[task]
+
+    def get_reg_output_scale(self, task: str) -> float:
+        """Return output_scale for a regression task, or 1.0 if not regression."""
+        return float(self._reg_output_scale.get(task, 1.0))
+
+    def forward(self, eventdict: dict) -> dict[str, torch.Tensor]:
+        fused = self.encoder(eventdict)  # (B, D)
+        z = self.trunk(fused)  # (B, H)
+        out: dict[str, torch.Tensor] = {}
+        for t, head in self.outs.items():
+            x = head(z)
+            s = self._reg_output_scale.get(t)
+            if s is not None:
+                x = x * s
+            out[t] = x
+        return out

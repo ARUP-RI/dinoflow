@@ -9,9 +9,9 @@ from collections import defaultdict
 from typing import List
 import logging
 
-logger = logging.getLogger(__name__)
+from dinoflow.util import reg_physical_to_training_target
 
-from dinoflow import util
+logger = logging.getLogger(__name__)
 
 def shuffle(x):
     """
@@ -364,93 +364,396 @@ class NoLabelTubes(Dataset):
         
 
 
+#class TubeData(Dataset):
+    #"""
+    #A DataSet of flow tubes. Paths to the actual tube files (.pt) along with labels are given as an input CSV file
+    #This can can optionally return a subset of the standard b, t, and m tubes by using the tubes_to_return arg
+    #If multiple tubes are present, the return value of the __getitem__ is a dictionary keyed by tube type
+    #But if there's only one tube (e.g. tube_type="b"), then just the tube tensor is returned, not a dictionary
+    #"""
+
+    #def __init__(self, labelcsv, events_to_return=-1, data_root="/", tubes_to_return=["b", "t", "m"], labelkey="label", textroot="/", report_key=None,transforms=None):
+        #if isinstance(labelcsv, str):
+            #self.data = pd.read_csv(labelcsv)
+        #lse:
+            #self.data = labelcsv
+        #self.tubes_to_return = tubes_to_return
+        #self.dataroot = Path(data_root)
+        #self.events_to_return = events_to_return
+        #self.labelkey = labelkey
+        #self.transforms = transforms
+
+        #self.report_key = report_key
+        #self.text_root = Path(textroot) if textroot is not None else self.dataroot
+
+        #if self.report_key is not None:
+            #assert self.report_key in self.data.columns, \
+                #f"{self.report_key} not in {self.data.columns}"
+    
+
+    #def __len__(self):
+        #return len(self.data)
+    
+    #def __getitem__(self, i):
+        #row = self.data.iloc[i]
+        #tubes = {}
+        #for tube in self.tubes_to_return:
+            #tubedata = torch.load(self.dataroot / row['path'], weights_only=False)
+            #if self.events_to_return != -1:
+                #if tubedata[tube].shape[0] < self.events_to_return:
+                    # repeat the events in the sample until we have enough
+                    #num_repeats = self.events_to_return // tubedata[tube].shape[0] + 1
+                    #logger.info(f"Repeating {tube} {num_repeats} times to get {self.events_to_return} events")
+                    #tubedata[tube] = tubedata[tube].repeat(num_repeats, 1)
+                    #logger.info(f"New shape of {tube}: {tubedata[tube].shape}")
+                    #tubedata[tube] = tubedata[tube][0:self.events_to_return, :]
+                    
+                
+                #tubes[tube] = subsample_events(tubedata[tube], self.events_to_return)
+            #else:
+                #tubes[tube] = tubedata[tube]
+        
+        #if self.transforms:
+            #for tube in self.tubes_to_return:
+                #tubes[tube] = self.transforms(tubes[tube])
+        
+        #if len(tubes) == 1:
+            #tubes = tubes[self.tubes_to_return[0]]
+         
+        # For now....
+        #label = row[self.labelkey]
+        # If datatype of row with label is float, we just pass back the value,
+        # otherwise we convert to 0/1
+        #if isinstance(label, float):
+            #label = label
+        #else:
+            #if label:
+                #label = 1.0
+            #else:
+                #label = 0.0
+
+        #rowdict = row.to_dict()
+        #rowdict['label'] = label
+
+        # load and attach text embedding if requested 
+        #if self.report_key is not None:
+            #txt_path = row[self.report_key]
+            #if isinstance(txt_path, str) and len(txt_path) > 0:
+                #full_txt_path = self.text_root / txt_path
+                #text_emb = torch.load(full_txt_path, map_location="cpu")
+                
+                # ensure it's 1D float tensor
+                #if isinstance(text_emb, np.ndarray):
+                    #text_emb = torch.from_numpy(text_emb)
+                #text_emb = text_emb.float()
+                #rowdict["text_emb"] = text_emb
+            #else:
+                #rowdict["text_emb"] = None
+        
+        #return tubes, rowdict
+    
+import numpy as np
+import pandas as pd
+import torch
+from torch.utils.data import Dataset
+from pathlib import Path
+
+IGNORE_INDEX = -100
+
+
+def _is_missing(val):
+    if val is None:
+        return True
+    if isinstance(val, str):
+        s = val.strip().lower()
+        return s in {"", "nan", "none", "null", "na"}
+    return pd.isna(val)
+
+
 class TubeData(Dataset):
     """
-    A DataSet of flow tubes. Paths to the actual tube files (.pt) along with labels are given as an input CSV file
-    This can can optionally return a subset of the standard b, t, and m tubes by using the tubes_to_return arg
-    If multiple tubes are present, the return value of the __getitem__ is a dictionary keyed by tube type
-    But if there's only one tube (e.g. tube_type="b"), then just the tube tensor is returned, not a dictionary
+    Expects:
+      - label_keys: dict task -> CSV column name
+      - task_specs: dict task -> spec, where spec includes:
+          type: "bce" | "ce" | "ordinal" | "reg"
+          out_dim: int
+          (optional) classes: list[str] for "ce" tasks if CSV stores strings
+    Produces:
+      rowinfo["labels"][task] : Tensor
+      rowinfo["label_masks"][task] : float Tensor {0,1}
     """
 
-    def __init__(self, labelcsv, events_to_return=-1, data_root="/", tubes_to_return=["b", "t", "m"], labelkey="label", textroot="/", report_key="text_emb",transforms=None):
+    def __init__(
+        self,
+        labelcsv,
+        task_specs: dict, # from cfg["model"]["tasks"] OR derived task_defs
+        label_keys: dict, # task -> csv col (from label_col mapping)
+        events_to_return=-1,
+        data_root="/",
+        tubes_to_return=("b", "t", "m"),
+        labelkey="label", # optional legacy single label
+        textroot=None,
+        report_key=None,
+        transforms=None,
+    ):
         if isinstance(labelcsv, str):
             self.data = pd.read_csv(labelcsv)
         else:
             self.data = labelcsv
-        self.tubes_to_return = tubes_to_return
+
+        self.task_specs = task_specs
+        self.label_keys = label_keys
+
+        self.tubes_to_return = list(tubes_to_return)
         self.dataroot = Path(data_root)
-        self.events_to_return = events_to_return
+        self.events_to_return = int(events_to_return) if events_to_return is not None else -1
         self.labelkey = labelkey
         self.transforms = transforms
 
         self.report_key = report_key
-        self.text_root = Path(textroot) if textroot is not None else self.dataroot
+        self.text_root = Path(textroot) if textroot is not None else None
+
+        # sanity
+        assert "path" in self.data.columns, "CSV must contain a 'path' column"
+        for task, col in self.label_keys.items():
+            if col not in self.data.columns:
+                raise ValueError(f"CSV missing label col '{col}' for task '{task}'")
 
         if self.report_key is not None:
-            assert self.report_key in self.data.columns, \
-                f"{self.report_key} not in {self.data.columns}"
-    
+            if self.report_key not in self.data.columns:
+                raise ValueError(f"{self.report_key} missing in CSV")
+            if self.text_root is None:
+                raise ValueError("textroot must be set if report_key is not None")
+
+        # build class maps for CE tasks if classes provided
+        self.class_map = {}
+        for task, spec in self.task_specs.items():
+            if spec.get("type") == "ce" and "classes" in spec:
+                self.class_map[task] = {
+                    str(c).strip().lower(): i for i, c in enumerate(spec["classes"])
+                }
 
     def __len__(self):
         return len(self.data)
-    
+
+    def _encode(self, task: str, val):
+        spec = self.task_specs.get(task, {})
+        typ = str(spec.get("type", "bce")).strip().lower()
+
+        # handle missing labels for different task types
+        if _is_missing(val):
+            if typ in ("ce", "ordinal"):
+                return IGNORE_INDEX, 0.0
+            else:  # bce/reg
+                return float("nan"), 0.0
+
+        # binary bce
+        if typ == "bce":
+            # actual booleans
+            if isinstance(val, (bool, np.bool_)):
+                return float(val), 1.0
+
+            # strings
+            if isinstance(val, str):
+                s = val.strip().lower()
+
+                # task-specific mapping for clinical_abnormal
+                if task == "clinical_abnormal":
+                    if s == "abnormal":
+                        return 1.0, 1.0
+                    if s == "normal":
+                        return 0.0, 1.0
+                    if s == "none":
+                        return 0.0, 0.0
+
+                # task-specific mapping for bio_flag
+                if task == "bio_flag":
+                    if s == "True":
+                        return 1.0, 1.0
+                    if s == "False":
+                        return 0.0, 1.0
+                    if s == "none":
+                        return 0.0, 0.0
+
+                # task-specific mapping for reactive_vs_malignant
+                if task == "reactive_vs_malignant":
+                    if s == "malignant":
+                        return 1.0, 1.0
+                    if s == "reactive":
+                        return 0.0, 1.0
+                    if s == "none":
+                        return 0.0, 0.0
+
+                if task == "clonality":
+                    if s == "clonal":
+                        return 1.0, 1.0
+                    if s == "polyclonal":
+                        return 0.0, 1.0
+                    if s == "uncertain":
+                        return 0.0, 0.0
+                    if s == "none":
+                        return 0.0, 1.0
+
+                # task-specific mapping for acute_maturation
+                if task == "acute_maturation":
+                    if s == "mature":
+                        return 1.0, 1.0
+                    if s == "acute":
+                        return 0.0, 1.0
+                    if s == "none":
+                        return 0.0, 0.0
+
+                # generic binary parsing
+                if s in ("1", "1.0", "true", "t", "yes", "y", "pos", "positive"):
+                    return 1.0, 1.0
+                if s in ("0", "0.0", "false", "f", "no", "n", "neg", "negative"):
+                    return 0.0, 1.0
+
+                raise ValueError(f"Non-binary string '{val}' in BCE task '{task}'")
+
+            # numeric binary parsing
+            elif isinstance(val, (int, float, np.integer, np.floating)):
+                if float(val) in (0.0, 1.0):
+                    return float(val), 1.0
+                raise ValueError(f"Non-binary numeric '{val}' in BCE task '{task}'")
+
+            # anything else
+            else:
+                raise ValueError(
+                    f"Unhandled value type for BCE task '{task}': val={repr(val)} type={type(val)}"
+                )
+
+        elif typ == "reg":
+            # Numeric target (e.g. disease_burden_pct 0–100). Coerce int/float/string.
+            try:
+                v = float(val)
+            except (TypeError, ValueError) as e:
+                raise ValueError(
+                    f"Bad regression value for task '{task}': val={repr(val)} type={type(val)}"
+                ) from e
+            v = reg_physical_to_training_target(v, spec)
+            return v, 1.0
+
+        #elif typ == "ordinal":
+            #if isinstance(val, str):
+                #val = int(float(val.strip()))
+            #return int(val), 1.0
+        
+        elif typ == "ordinal":
+            if _is_missing(val):
+                return IGNORE_INDEX, 0.0
+
+            try:
+                if isinstance(val, str):
+                    val = int(float(val.strip()))
+                else:
+                    val = int(val)
+            except (TypeError, ValueError) as e:
+                raise ValueError(
+                    f"Bad ordinal value for task '{task}': val={repr(val)} type={type(val)}"
+                ) from e
+
+            n_classes = spec.get("n_classes")
+            if n_classes is not None and not (0 <= val < int(n_classes)):
+                raise ValueError(
+                    f"Ordinal value '{val}' out of range for task '{task}' with n_classes={n_classes}"
+                )
+
+            return val, 1.0
+                
+
+        elif typ == "ce":
+            # if already numeric
+            if isinstance(val, (int, np.integer)):
+                return int(val), 1.0
+            if isinstance(val, (float, np.floating)) and float(val).is_integer():
+                return int(val), 1.0
+
+            # else map string using classes
+            s = str(val).strip().lower()
+
+            if s == "none":
+                return IGNORE_INDEX, 0.0
+
+            if task not in self.class_map:
+                raise ValueError(
+                    f"Task '{task}' is CE but no classes provided in task_specs and value is non-numeric: '{val}'. "
+                    f"Either provide spec['classes'] or store numeric ids in the CSV."
+                )
+            if s not in self.class_map[task]:
+                raise ValueError(
+                    f"Unknown class '{val}' for task '{task}'. Allowed: {list(self.class_map[task].keys())}"
+                )
+            return int(self.class_map[task][s]), 1.0
+
+        else:
+            raise ValueError(f"Unknown task type '{typ}' for task '{task}'")
+
     def __getitem__(self, i):
         row = self.data.iloc[i]
+        tubedata = torch.load(self.dataroot / row["path"], map_location="cpu", weights_only=False)
+
         tubes = {}
         for tube in self.tubes_to_return:
-            tubedata = torch.load(self.dataroot / row['path'], weights_only=False)
+            x = tubedata[tube]
+
             if self.events_to_return != -1:
-                if tubedata[tube].shape[0] < self.events_to_return:
-                    # repeat the events in the sample until we have enough
-                    num_repeats = self.events_to_return // tubedata[tube].shape[0] + 1
-                    logger.info(f"Repeating {tube} {num_repeats} times to get {self.events_to_return} events")
-                    tubedata[tube] = tubedata[tube].repeat(num_repeats, 1)
-                    logger.info(f"New shape of {tube}: {tubedata[tube].shape}")
-                    tubedata[tube] = tubedata[tube][0:self.events_to_return, :]
-                    
-                
-                tubes[tube] = subsample_events(tubedata[tube], self.events_to_return)
-            else:
-                tubes[tube] = tubedata[tube]
-        
-        if self.transforms:
-            for tube in self.tubes_to_return:
-                tubes[tube] = self.transforms(tubes[tube])
-        
-        if len(tubes) == 1:
-            tubes = tubes[self.tubes_to_return[0]]
-         
-        # For now....
-        label = row[self.labelkey]
-        # If datatype of row with label is float, we just pass back the value,
-        # otherwise we convert to 0/1
-        if isinstance(label, float):
-            label = label
-        else:
-            if label:
-                label = 1.0
-            else:
-                label = 0.0
+                if x.shape[0] < self.events_to_return:
+                    num_repeats = self.events_to_return // x.shape[0] + 1
+                    x = x.repeat(num_repeats, 1)[: self.events_to_return]
+                x = subsample_events(x, int(self.events_to_return)) 
 
-        rowdict = row.to_dict()
-        rowdict['label'] = label
+            if self.transforms is not None:
+                x = self.transforms(x)
 
-        # load and attach text embedding if requested 
+            tubes[tube] = x
+
+        # multitask labels
+        labels = {}
+        label_masks = {}
+
+        for task, col in self.label_keys.items():
+            if task not in self.task_specs:
+                continue
+
+            y, m = self._encode(task, row[col])
+            typ = self.task_specs.get(task, {}).get("type", "bce")
+
+            if typ in ("ce", "ordinal"):
+                labels[task] = torch.tensor(y, dtype=torch.long)
+            else:
+                labels[task] = torch.tensor(y, dtype=torch.float32)
+
+            label_masks[task] = torch.tensor(m, dtype=torch.float32)
+
+        rowdict = {
+            "labels": labels,
+            "label_masks": label_masks,
+        }
+
+        if "ACCESSION" in self.data.columns:
+            rowdict["ACCESSION"] = row["ACCESSION"]
+
+        # optional legacy single-label
+        if self.labelkey in self.data.columns:
+            y, m = self._encode(self.labelkey, row[self.labelkey])
+            rowdict["label"] = torch.tensor(y, dtype=torch.float32)
+            rowdict["label_mask"] = torch.tensor(m, dtype=torch.float32)
+
+        # optional text embeddings
         if self.report_key is not None:
             txt_path = row[self.report_key]
             if isinstance(txt_path, str) and len(txt_path) > 0:
                 full_txt_path = self.text_root / txt_path
                 text_emb = torch.load(full_txt_path, map_location="cpu")
-                
-                # ensure it's 1D float tensor
                 if isinstance(text_emb, np.ndarray):
                     text_emb = torch.from_numpy(text_emb)
-                text_emb = text_emb.float()
-                rowdict["text_emb"] = text_emb
+                rowdict["text_emb"] = text_emb.float()
             else:
                 rowdict["text_emb"] = None
-        
+
         return tubes, rowdict
+
     
     def get_row_data(self, i):
         row = self.data.iloc[i]
@@ -467,6 +770,7 @@ class TubeData(Dataset):
         pos = self.data[self.data[self.labelkey] == 1]
         neg = self.data[self.data[self.labelkey] == 0]
         return pos, neg
+    
 
 
 def collate_fn(items):
@@ -476,6 +780,10 @@ def collate_fn(items):
     return items
 
 import logging
+import pandas as pd
+from torch.utils.data import Dataset
+from PIL import Image
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 

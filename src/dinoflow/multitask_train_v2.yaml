@@ -1,0 +1,250 @@
+seed: 0
+
+#The model predicts multi-task heads that decompose flow cytometry interpretation into
+#biologic subtasks and global meta/quality subtasks (trained on all cases). The primary 
+#optimization target remains ACTION_REQUIRED.
+
+#Primary objective: Predict whether a case requires immediate clinical follow-up (ACTION_REQUIRED).
+
+#Heads
+#1. action_required (binary) 
+   #Primary clinical target.
+   #Output: 1 = requires follow-up / flag for review,
+           #0 = no immediate action required.
+
+#2. abnormal_population (binary) **abnormal pop used to gate lineage, clonality, maturation tasks 
+   #Output: 1 = abnormal / atypical / clonal / phenotypically abnormal population detected in the CURRENT specimen,
+           #0 = no abnormal population identified.
+
+#3. malignant_vs_reactive (binary) 
+   #Distinguishes malignant/clonal processes from reactive/benign abnormalities.
+   #Output: 1 = malignant (neoplastic),
+           #0 = reactive/benign abnormality.
+
+#4. clonality (multiclass: {clonal, polyclonal, uncertain}) 
+   #Detects lineage clonality when a lymphoid abnormal population is present.
+   #Output:
+       #clonal  = clear light-chain restriction or restricted TRBC/TRBC1,
+       #polyclonal = explicitly polytypic/polyclonal / no restriction,
+       #uncertain  = equivocal/limited/hedged clonality language.
+
+#5. aberrancy_grade (ordinal: 0–2) 
+   #Measures strength of immunophenotypic aberrancy.
+   #Output:
+       #0 = none,
+       #1 = mild/partial shift or equivocal atypia,
+       #2 = clear/classic aberrancy (incl. explicit restriction).
+
+#6. acute_maturation (binary) 
+   #Differentiates acute/blast-dominant processes from mature/chronic disorders.
+   #Output: 0 = acute/blast-dominant abnormal population,
+           #1 = mature/chronic abnormal population.
+
+#7. myeloid_lineage (binary) 
+   #Indicates abnormal myeloid lineage involvement.
+   #Output: 1 = abnormal myeloid/blast population,
+           #0 = none detected.
+
+#8. bcell_lineage (binary) 
+   #Indicates abnormal B-cell lineage involvement.
+   #Output 1 = abnormal B-cell population,
+           #0 = none detected.
+
+#9. t_nk_lineage (binary) 
+   #Indicates abnormal T- or NK-cell lineage involvement.
+   #Output 1 = abnormal T/NK population,
+           #0 = none detected.
+
+#10. flow_inderterminate (binary) ##not currently used 
+   #Captures flow-negative or nonspecific cases that are NOT fully reassuring due to
+   #explicit indeterminate/suspicious phrasing or limitations (CURRENT specimen only).
+   #Output 1 = indeterminate / cannot exclude / equivocal / limited evaluation / not specific and may be seen in neoplasms,
+          #0 = none of the above.
+
+#11. suboptimal_viability (regression)
+   #Quality head: regress reported specimen viability. Label column: viability_pct (0–100).
+   #Mask rows with missing viability in the training CSV when preparing labels.
+
+#11. suboptimal_viability (binary) **v1 viability head**
+   #Output 1 = suboptimal viability of current sample (<80%)
+          #0 = viable specimen
+
+#12. disease_burden (reg)
+   #Regression on extracted disease burden percent (0–100) to capture severity and help distinguish
+   #low-burden action-required cases from negatives. Label column: disease_burden_pct (numeric).
+
+#13. add_on (binary)
+  #cases where an add-on tube was ordered for the case
+  #Output 1 = add-on tube was ordered,
+         #0 = no add on ordered
+
+#14. subtle_pattern (binary)
+  #cases where a subtle pattern was identified in the case that is not an explicit diagnoses phenotype e.g. weak33, No20, left shift
+  #Output 1 = subtle pattern was identified,
+         #0 = otherwise.
+
+model:
+  num_features: 13
+  model_embed_dim: 512
+  backbone_heads: 8
+  backbone_layers: 6
+  d_ff: 2048
+  layer_type: swiglu
+  dropout: 0.0
+  include_classifier: false
+
+  tasks:
+    action_required:
+      type: bce
+      out_dim: 1
+      label_col: ACTION_REQUIRED
+      pos_weight: 1.0
+    abnormal_pop:
+      type: bce
+      out_dim: 1
+      label_col: abnormal_population
+    reactive_vs_malignant:
+      type: bce
+      out_dim: 1
+      label_col: malignant_vs_reactive
+      parent_gate: abnormal_pop
+    #myeloid_lineage:
+      #type: bce
+      #out_dim: 1
+      #label_col: lineage_myeloid
+    #bcell_lineage:
+      #type: bce
+      #out_dim: 1
+      #label_col: lineage_B
+    #t_nk_lineage:
+      #type: bce
+      #out_dim: 1
+      #label_col: lineage_T
+    suboptimal_viability:
+      type: bce
+      out_dim: 1
+      label_col: suboptimal_viability
+    #suboptimal_viability:
+      #type: reg
+      #out_dim: 1
+      #loss: huber
+      #label_col: viability_pct_y
+      # Train on logit(viability_pct / logit_max); pred in logit space; physical = sigmoid(pred)*logit_max
+      #reg_target_transform: logit
+      #ogit_max: 100.0
+      #logit_eps: 1.0e-4
+      #output_scale: 1.0
+      # Huber delta in logit space; tune after first run (e.g. 0.5–2.0).
+      #huber_delta: 1.0
+    #abberancy:
+      #type: ordinal
+      # out_dim = number of classes K (0..K-1). FlowMultiTaskModel uses K-1 CORAL logits.
+      #out_dim: 3
+      #n_classes: 3
+      #label_col: aberrancy_grade
+      # CORAL: two cumulative thresholds — [0→1+, 1→2+]. Higher weight on index 1 penalizes
+      # missing grade 2 (1→2 errors) more than missing mild aberrancy (0→1).
+      #coral_threshold_weights: [1.0, 2.0]
+      # coral_pos_weight: [1.0, 1.0]  # optional: class imbalance per threshold
+    disease_burden:
+      type: reg
+      out_dim: 1
+      loss: huber
+      label_col: disease_burden_pct
+      # Linear target: head * output_scale → ~0–100% burden
+      #output_scale: 100.0
+      # arcsinh: targets t = asinh(burden_pct / arcsinh_scale); keep output_scale ~1
+      reg_target_transform: arcsinh
+      arcsinh_scale: 1.0
+      output_scale: 1.0
+    #clonality:
+      #type: bce
+      #out_dim: 1
+      #label_col: clonality
+      #parent_gate: abnormal_pop
+    #acute_maturation:
+      #type: bce
+      #ut_dim: 1
+      #label_col: maturation
+      #parent_gate: abnormal_pop
+    #  out_dim: 1
+    #add_on:
+    #  type: bce
+    #  out_dim: 1
+    #  label_col: ADD_ON
+    #subtle_pattern:
+      #type: bce
+      # out_dim: 1
+      #label_col: subtle_pattern
+
+
+  trunk:            
+    hidden_dim: 256
+    n_layers: 2
+    drop: 0.1
+    use_ln: true  
+
+train:
+  primary_task: action_required
+
+  lr:
+    min_lr: 1.0e-5
+    max_lr: 2.5e-4
+    warmup_epochs: 10
+    hold_epochs: 5
+    decay_end_epoch: 100
+    trunk_lr_mult: 0.2
+
+  freeze_encoder_iters: 0
+
+  # Used by eval.train3tubesmulti ModelCheckpoint (takes precedence over `checkpoint:` below).
+  checkpoint_monitor: val/specificity_at_npv_0.95
+  checkpoint_mode: max
+
+  # stochastic weight averageing (Lightning callback in eval._run_trainer). Set 'enabled: true' to run.
+  # epoch_start: fraction in (0,1] of total epochs, or integer epoch index.
+  swa:
+    enabled: false
+    lr: 5.0e-5
+    epoch_start: 0.8
+    annealing_epochs: 1
+    annealing_strategy: cos
+
+  task_weights:
+    action_required: 1.0
+    abnormal_pop: 0.5
+    reactive_vs_malignant: 0.3
+    myeloid_lineage: 0.15
+    bcell_lineage: 0.15
+    t_nk_lineage: 0.15
+    suboptimal_viability: 0.25
+    abberancy: 0.3
+    clonality: 0.15
+    acute_maturation: 0.15
+    disease_burden: 0.3
+
+
+
+data:
+  dataroot: /mnt/ri_share/Data/flow_data/
+  textroot: null
+  report_key: null #disables report loading 
+
+  tubes: ["b", "t", "m"]
+  events: 4096
+  batch_size: 16
+  epochs: 100
+
+  positive_repeat_factor: 1
+
+logging:
+  comet_workspace: null
+  comet_project: null
+  run_name: null
+
+# Fallback only if train.checkpoint_monitor is omitted (see eval._resolve_checkpoint_monitor_and_mode).
+checkpoint:
+  monitor: val/specificity_at_npv_0.95
+  mode: max
+
+

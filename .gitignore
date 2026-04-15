@@ -93,3 +93,16 @@ Thumbs.db
 # Others
 .python-version
 .git/
+
+# model_checkpoints
+contrast_runs/
+multi_runs/
+
+#notebooks
+/src/dinoflow/notebooks/
+
+# eval outputs
+/src/dinoflow/multi_eval_outputs/
+/src/dinoflow/contrast_eval_outputs/
+
+

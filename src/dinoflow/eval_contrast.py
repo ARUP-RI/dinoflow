@@ -24,13 +24,12 @@ from torchmetrics.aggregation import MeanMetric
 
 from torch.utils.data import DataLoader, Dataset
 import numpy as np
-from omegaconf import OmegaConf
 
 
-from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint, BTMTubes, load_btm_from_checkpoint, IlseBagModel, munge_state_dict, FlowMultiTaskModel
+from dinoflow.models import TubeEncoder, TubeEncoderWithProjection, load_checkpoint, BTMTubes, load_btm_from_checkpoint, IlseBagModel, munge_state_dict
 from dinoflow.data import TubeData, collate_fn, compose, shift, scale, noise, standardize_range, CSVDataset
 from dinoflow import util
-from dinoflow.plmodels import BinaryClassificationModel, ClassificationModel, RegressionModel, ContrastClassificationModel, MultiTaskClassificationModel
+from dinoflow.plmodels import BinaryClassificationModel, ClassificationModel, RegressionModel, ContrastClassificationModel
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -39,89 +38,6 @@ app = typer.Typer(pretty_exceptions_show_locals=False)
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s]   %(levelname)s   %(message)s')
 
 logger = logging.getLogger(__name__)
-
-
-def _swa_kwargs_from_train_cfg(train_cfg, max_epochs: int) -> dict:
-    """
-    Read train.swa from YAML for multitask runs. Keys (all optional):
-
-      enabled: bool
-      lr: float (SWA learning rate; passed to StochasticWeightAveraging)
-      epoch_start: float in (0,1] = fraction of max_epochs, or int = epoch index
-      annealing_epochs, annealing_strategy: passed through to PL
-    """
-    out = {
-        "use_swa": False,
-        "swa_lrs": 5e-5,
-        "swa_epoch_start": 0.75,
-        "swa_annealing_epochs": 1,
-        "swa_annealing_strategy": "cos",
-    }
-    if not train_cfg:
-        return out
-    tc = train_cfg
-    if OmegaConf.is_config(tc):
-        tc = OmegaConf.to_container(tc, resolve=True)
-    if not isinstance(tc, dict):
-        tc = dict(tc) if tc is not None else {}
-    swa = (tc or {}).get("swa") or {}
-    if not swa.get("enabled", False):
-        return out
-    out["use_swa"] = True
-    out["swa_lrs"] = float(swa.get("lr", out["swa_lrs"]))
-    ep = swa.get("epoch_start", 0.75)
-    if isinstance(ep, str):
-        ep = float(ep)
-    if isinstance(ep, float) and 0.0 < ep <= 1.0:
-        ep = int(ep * int(max_epochs))
-    out["swa_epoch_start"] = int(ep)
-    out["swa_annealing_epochs"] = int(swa.get("annealing_epochs", 1))
-    out["swa_annealing_strategy"] = str(swa.get("annealing_strategy", "cos"))
-    return out
-
-
-def _resolve_checkpoint_monitor_and_mode(cfg) -> tuple[str, str]:
-    """
-    train3tubesmulti checkpoint target.
-
-    Precedence:
-      1. cfg.train.checkpoint_monitor / checkpoint_mode (if set)
-      2. cfg.checkpoint.monitor / mode (top-level block in YAML — historically easy to forget)
-      3. defaults: val/specificity_at_recall_0.99, max
-    """
-    train = cfg.get("train") if hasattr(cfg, "get") else None
-    if train is None and OmegaConf.is_config(cfg):
-        train = OmegaConf.select(cfg, "train", default=None)
-    train = train or {}
-    ck = cfg.get("checkpoint") if hasattr(cfg, "get") else None
-    if ck is None and OmegaConf.is_config(cfg):
-        ck = OmegaConf.select(cfg, "checkpoint", default=None)
-    ck = ck or {}
-
-    def _get(d, k, default=None):
-        if d is None:
-            return default
-        if hasattr(d, "get"):
-            v = d.get(k, default)
-            return default if v is None else v
-        try:
-            v = d[k]
-            return default if v is None else v
-        except Exception:
-            return default
-
-    mon = _get(train, "checkpoint_monitor")
-    mode = _get(train, "checkpoint_mode")
-    if mon is None:
-        mon = _get(ck, "monitor")
-    if mode is None:
-        mode = _get(ck, "mode")
-    if mon is None:
-        mon = "val/specificity_at_recall_0.99"
-    if mode is None:
-        mode = "max"
-    return str(mon).strip(), str(mode).strip()
-
 
 @dataclass
 class DataConfig:
@@ -316,7 +232,7 @@ class ContrastClassificationHead(nn.Module):
         self,
         num_features: int,
         num_classes: int,
-        proj_dim: int = 1024,
+        proj_dim: int = 768,
         output_scale_factor: float = 1.0,
     ):
         super().__init__()
@@ -459,7 +375,6 @@ def _run_trainer(
     train_labels,
     test_labels,
     tubes,
-    tasks,
     run_name,
     labelkey,
     dataroot,
@@ -471,37 +386,26 @@ def _run_trainer(
     comet_workspace,
     comet_project,
     positive_repeat_factor=1,
-    label_keys=None,
-    *,
-    use_swa: bool = False,
+    # ---- SWA knobs ----
+    use_swa: bool = True,
     swa_lrs: float = 5e-5,
-    swa_epoch_start=0.75,
+    swa_epoch_start=0.75,          # float in [0,1] (fraction of epochs) OR int epoch index
     swa_annealing_epochs: int = 1,
     swa_annealing_strategy: str = "cos",
 ):
+
     torch.set_float32_matmul_precision("medium")
 
-    # oversample key (must be a CSV column name) 
-    oversample_key = labelkey
-    if label_keys is not None and hasattr(model, "primary_task"):
-        pt = model.primary_task
-        if pt in label_keys:               
-            oversample_key = label_keys[pt]
-
-    # Repeat positive rows to balance dataset
+    # Repeat rows in positive samples to balance the dataset
     if positive_repeat_factor > 1:
-        train_df = pd.read_csv(train_labels) if isinstance(train_labels, str) else train_labels
-        if oversample_key in train_df.columns:
-            positive_rows = train_df[train_df[oversample_key] == 1]
-            logger.info(f"Positive samples: {len(positive_rows)}")
-            new_rows = pd.concat([positive_rows] * positive_repeat_factor, ignore_index=True)
-            train_df = pd.concat([train_df, new_rows], ignore_index=True)
-            logger.info(f"New positive samples: {len(train_df[train_df[oversample_key] == 1])}")
-            train_labels = train_df
-        else:
-            logger.warning(f"Oversample key '{oversample_key}' not found; skipping oversampling.")
+        train_df = pd.read_csv(train_labels)
+        positive_rows = train_df[train_df[labelkey] == 1]
+        logger.info(f"Positive samples: {len(positive_rows)}")
+        new_rows = pd.concat([positive_rows] * positive_repeat_factor, ignore_index=True)
+        train_df = pd.concat([train_df, new_rows], ignore_index=True)
+        logger.info(f"New positive samples: {len(train_df[train_df[labelkey] == 1])}")
+        train_labels = train_df  # pass DF directly into TubeData if it supports it
 
-    # transforms unchanged...
     train_transforms = compose([
         partial(shift, prob=0.5, scale=0.5),
         partial(scale, prob=0.5, scale=0.5),
@@ -512,51 +416,59 @@ def _run_trainer(
     checkpoint_monitor_val = model.checkpoint_monitor.strip()
     checkpoint_monitor_mode = model.checkpoint_mode
 
-    # build datasets
     traindata = TubeData(
         train_labels,
         tubes_to_return=tubes,
         events_to_return=int(events),
         data_root=dataroot,
         labelkey=labelkey,
-        task_specs=tasks,
-        label_keys=label_keys,    
         textroot=textroot,
         report_key=report_key,
         transforms=train_transforms,
     )
-
     trainloader = DataLoader(
         traindata,
         batch_size=batch_size,
         shuffle=True,
         num_workers=4,
-        drop_last=True
+        pin_memory=True,
+        persistent_workers=True,
     )
     logger.info(f"Loaded {len(trainloader.dataset)} samples for training")
 
+    # Check if we have any positive samples for classification models
+    if hasattr(traindata, "positive_negative_samples"):
+        pos, neg = traindata.positive_negative_samples()
+        logger.info(f"Positive samples: {len(pos)}")
+        logger.info(f"Negative samples: {len(neg)}")
+        assert len(pos) > 0, "No positive samples found :("
+
+    val_events = int(events)
+    logger.info(f"Train events: {int(events)}, val events: {val_events}")
     valdata = TubeData(
         test_labels,
         tubes_to_return=tubes,
-        events_to_return=int(events),
-        task_specs=tasks,
+        events_to_return=val_events,
         data_root=dataroot,
         labelkey=labelkey,
-        label_keys=label_keys,       
         textroot=textroot,
         report_key=report_key,
         transforms=val_transforms,
     )
-
     valloader = DataLoader(
         valdata,
         batch_size=batch_size,
         shuffle=False,
         num_workers=0,
+        pin_memory=True,
     )
     logger.info(f"Loaded {len(valloader.dataset)} samples for val")
 
-    # logger/callbacks/trainer 
+    if hasattr(valdata, "positive_negative_samples"):
+        pos, neg = valdata.positive_negative_samples()
+        logger.info(f"Val positives: {len(pos)}")
+        logger.info(f"Val negatives: {len(neg)}")
+
     comet_logger = CometLogger(
         workspace=comet_workspace if comet_workspace is not None else "r-i",
         save_dir="dinoflow_classifier_runs",
@@ -579,35 +491,38 @@ def _run_trainer(
         LearningRateMonitor(logging_interval="step"),
     ]
 
+    # ---- SWA: add callback in the Trainer ----
     if use_swa:
-        swa_lr = float(swa_lrs)
-        ep_start = swa_epoch_start
-        if isinstance(ep_start, str):
-            ep_start = float(ep_start)
-        if isinstance(ep_start, float) and 0.0 < ep_start <= 1.0:
-            ep_start = int(ep_start * int(epochs))
+        assert swa_lrs is not None, "swa_lrs must be set when use_swa=True"
+
+        swa_lrs = float(swa_lrs)
+
+        # normalize swa_epoch_start
+        if isinstance(swa_epoch_start, str):
+            swa_epoch_start = float(swa_epoch_start)
+        if isinstance(swa_epoch_start, float):
+            swa_epoch_start = int(swa_epoch_start * epochs)
         else:
-            ep_start = int(ep_start)
-        ep_start = max(0, ep_start)
+            swa_epoch_start = int(swa_epoch_start)
+        
+        swa_lrs = float(swa_lrs)
         callbacks.append(
             StochasticWeightAveraging(
-                swa_lrs=swa_lr,
-                swa_epoch_start=ep_start,
-                annealing_epochs=int(swa_annealing_epochs),
-                annealing_strategy=str(swa_annealing_strategy),
+                swa_lrs=swa_lrs,
+                swa_epoch_start=swa_epoch_start,
+                annealing_epochs=swa_annealing_epochs,
+                annealing_strategy=swa_annealing_strategy,
                 device=None,
             )
         )
         logger.info(
-            f"SWA enabled: swa_lrs={swa_lr}, swa_epoch_start={ep_start} (of {epochs} epochs), "
-            f"annealing_epochs={swa_annealing_epochs}, strategy={swa_annealing_strategy}"
+            f"Enabled SWA: swa_lrs={swa_lrs}, swa_epoch_start={swa_epoch_start}, "
+            f"annealing_epochs={swa_annealing_epochs}, annealing_strategy={swa_annealing_strategy}"
         )
 
     trainer = pl.Trainer(
         max_epochs=epochs,
-        accelerator="gpu",
-        devices=4,
-        num_nodes=1,
+        accelerator="auto",
         precision="bf16-mixed",
         strategy=DDPStrategy(find_unused_parameters=True),
         callbacks=callbacks,
@@ -616,7 +531,6 @@ def _run_trainer(
     )
 
     trainer.fit(model, trainloader, valloader)
-
 
 
 
@@ -633,7 +547,7 @@ def train(run_name, train_labels, test_labels,
           freeze_backbone: bool = False, 
           freeze_backbone_layers: int = 0,
           batch_size: int=16, 
-          events: int = 8192, 
+          events: int = 4096, 
           epochs: int = 25, 
           mode: str = 'binary', 
           num_classes: int = 1,
@@ -722,7 +636,7 @@ def train3tubes(run_name, train_labels, test_labels,
                 max_lr: float = 0.00025,
                 comet_workspace: str = None,
                 comet_project: str = None,
-                use_swa=True,
+                use_swa=False,
                 swa_lrs=5e-5,
                 swa_epoch_start=0.75,):
     # Helps with too many open files errors?
@@ -806,177 +720,9 @@ def train3tubes(run_name, train_labels, test_labels,
         t_backbone.train()
         m_backbone.train()
    
-    # Single-head TubeData expects task_specs + label_keys (same schema as multitask).
-    _legacy_task_specs = {"head": {"type": "bce", "out_dim": 1}}
-    _legacy_label_keys = {"head": labelkey}
-    _run_trainer(
-        model,
-        train_labels,
-        test_labels,
-        ["b", "t", "m"],
-        _legacy_task_specs,
-        run_name,
-        labelkey,
-        dataroot,
-        textroot,
-        report_key,
-        events,
-        batch_size,
-        epochs,
-        comet_workspace,
-        comet_project,
-        positive_repeat_factor,
-        label_keys=_legacy_label_keys,
-        use_swa=use_swa,
-        swa_lrs=swa_lrs,
-        swa_epoch_start=swa_epoch_start,
-    )
+    _run_trainer(model, train_labels, test_labels, ["b", "t", "m"], run_name, labelkey, dataroot, textroot, report_key, events, batch_size, epochs, comet_workspace, comet_project, positive_repeat_factor, use_swa, swa_lrs, swa_epoch_start)
     
-
-
-
-@app.command()
-def train3tubesmulti(
-    run_name,
-    train_labels,
-    test_labels,
-    backbone_b: str,
-    backbone_t: str,
-    backbone_m: str,
-    config_path: str,            
-    dataroot: str = "/",
-    textroot: str = "/",
-    positive_repeat_factor: int = 1,
-    labelkey: str = "label",
-    report_key: str = None,
-    freeze_backbone: bool = False,
-    freeze_backbone_layers: int = 0,
-    batch_size: int = 16,
-    events: int = 4096,
-    epochs: int = 100,
-    max_lr: float = 2.5e-4,
-    comet_workspace: str = None,
-    comet_project: str = None,
-):
-    torch.multiprocessing.set_sharing_strategy("file_system")
-
-    # load config
-    cfg = OmegaConf.load(config_path)
-
-    task_defs = cfg["model"]["tasks"]
-    task_weights = cfg["train"]["task_weights"]
-    primary_task = cfg["train"].get("primary_task", "action_required")
-    pos_weight = cfg["train"].get("pos_weight", {})
-    label_keys = cfg["data"].get("label_keys", None)   # task->csv col
-    lr_cfg = cfg.get("train", {}).get("lr", {})
-
-    # Automatically build label_keys from your task definitions
-    # This pulls 'label_col' (e.g., ACTION_REQUIRED) for every task
-    label_keys = {
-        task_name: spec.get("label_col") 
-        for task_name, spec in task_defs.items() 
-        if "label_col" in spec
-    }
-
-    # Lightning label_map: task -> key in rowinfo["labels"]
-    # If your dataset uses labels dict keyed by task names, identity is correct:
-    label_map = {t: t for t in task_defs}
-
-    # load backbones
-    b_backbone, modelconf = load_checkpoint(backbone_b)
-    t_backbone, _ = load_checkpoint(backbone_t)
-    m_backbone, _ = load_checkpoint(backbone_m)
-
-    # build encoder
-    btm = BTMTubes(
-        num_features=13,
-        model_embed_dim=modelconf["model_dim"],
-        backbone_heads=modelconf["heads"],
-        backbone_layers=modelconf["layers"],
-        output_classes=1,
-        d_ff=modelconf["d_ff"],
-        layer_type=modelconf["layer_type"],
-        dropout=0.0,
-        output_scale_factor=1.0,
-        include_classifier=False,
-    )
-    btm.b_backbone = b_backbone
-    btm.t_backbone = t_backbone
-    btm.m_backbone = m_backbone
-
-    # freeze logic
-    if freeze_backbone_layers > 0 and not freeze_backbone:
-        raise ValueError("freeze_backbone_layers > 0 requires freeze_backbone to be True")
-
-    if freeze_backbone:
-        if freeze_backbone_layers > 0:
-            logger.info(f"Freezing backbone layers: {freeze_backbone_layers}")
-            for i in range(freeze_backbone_layers):
-                for enc in (btm.b_backbone.encoder, btm.t_backbone.encoder, btm.m_backbone.encoder):
-                    enc.layers[i].eval()
-                    for p in enc.layers[i].parameters():
-                        p.requires_grad = False
-        else:
-            logger.info("Freezing full backbone")
-            for bb in (btm.b_backbone, btm.t_backbone, btm.m_backbone):
-                bb.eval()
-                for p in bb.parameters():
-                    p.requires_grad = False
-    else:
-        logger.info("Unfreezing backbone")
-        for bb in (btm.b_backbone, btm.t_backbone, btm.m_backbone):
-            bb.train()
-
-    # build dict-returning multitask model 
-    #multi_model = FlowMultiTaskModel(btm, task_defs, head_cfg=cfg["model"].get("head_cfg", None))
-    trunk_cfg = cfg["model"].get("trunk", None)
-    multi_model = FlowMultiTaskModel(btm, task_defs, trunk_cfg=trunk_cfg)
-
-    ckpt_mon, ckpt_mode = _resolve_checkpoint_monitor_and_mode(cfg)
-    logger.info(f"Checkpoint monitor (from config): {ckpt_mon!r}, mode={ckpt_mode!r}")
-
-    # multitask LightningModule (the corrected one) 
-    pl_module = MultiTaskClassificationModel(
-        model=multi_model,
-        task_defs=task_defs,
-        task_weights=task_weights,
-        label_map=label_map,
-        primary_task=primary_task,
-        pos_weight=pos_weight,
-        min_lr = float(lr_cfg.get("min_lr", 1.0e-5)),
-        max_lr = float(lr_cfg.get("max_lr", 2.5e-4)),
-        trunk_lr_mult = float(lr_cfg.get("trunk_lr_mult", 0.2)),
-        warmup_epochs = int(lr_cfg.get("warmup_epochs", 10)),
-        hold_epochs = int(lr_cfg.get("hold_epochs", 5)),
-        decay_end_epoch = int(lr_cfg.get("decay_end_epoch", cfg["train"].get("epochs", 100))),
-        freeze_encoder_iters=cfg["train"].get("freeze_encoder_iters", 0),
-        checkpoint_monitor=ckpt_mon,
-        checkpoint_mode=ckpt_mode,
-        )
-
-    swa_kw = _swa_kwargs_from_train_cfg(cfg.get("train"), max_epochs=int(epochs))
-
-    _run_trainer(
-        pl_module,
-        train_labels,
-        test_labels,
-        ["b", "t", "m"],
-        task_defs,
-        run_name,
-        labelkey,
-        dataroot,
-        textroot,
-        report_key,
-        events,
-        batch_size,
-        epochs,
-        comet_workspace,
-        comet_project,
-        positive_repeat_factor,
-        label_keys=label_keys,
-        **swa_kw,
-    )
-
+    
 
 @app.command()
 def continue_training(checkpoint: str,
