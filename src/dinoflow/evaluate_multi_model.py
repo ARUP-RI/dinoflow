@@ -8,19 +8,6 @@ rebuilds 'FlowMultiTaskModel' + 'MultiTaskClassificationModel' from 'hyper_param
 runs **per-accession** inference via 'TubeData', and writes long-form predictions plus
 per-task metric tables.
 
-Reviewer map (main pieces)
---------------------------
-1. **Constants** — 'EVAL_TASK_NAMES' selects which tasks to score; 'TASK_DEFS' is the
-   fallback when checkpoint 'hparams["task_defs"]' cannot be reused (label columns / schema).
-2. **Checkpoint → nn.Module** — 'build_model_from_checkpoint' → 'build_core_model_from_hparams'
-   reconstructs the encoder ('BTMTubes') and task heads; 'MultiTaskInferenceWrapper'
-   normalizes forward output to 'dict[task, logits]'.
-3. **Data + labels** — 'evaluate_multitask_model' builds 'TubeData' with tubes
-   'b', 't', 'm'. 'extract_labels_and_masks' aligns masks with training
-   (see 'bce_mask_matches_training' for string BCE tasks).
-4. **Metrics** — 'compute_*_metrics' mirror common train/val reporting (ROC/AUPRC for BCE,
-   macro F1 for CE, MAE/RMSE for regression; optional physical space via 'util.reg_*').
-
 Outputs 
 ---------------------------
 - '{output_prefix}_predictions_long.csv' — one row per (accession, task); BCE includes
