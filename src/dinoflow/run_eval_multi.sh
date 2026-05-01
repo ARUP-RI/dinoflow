@@ -3,7 +3,7 @@ set -euo pipefail
 
 export CUDA_VISIBLE_DEVICES=3
 
-CKPT="/home/31792/repos/dinoflow/dinoflow_eval_dinoflow_multi_bs16_8kev_lr0.00025_trunkmult0.2_allheads_noaddononly_apgate/dinoflow_multi_bs16_8kev_lr0.00025_trunkmult0.2_allheads_noaddononly_apgate_val/specificity_at_recall_0.99=0.310__epoch=23.ckpt"
+CKPT="/home/31792/repos/dinoflow/multi_runs/dinoflow_eval_20260403_dinoflow_multi_bs16_8kev_lr0.00025_trunkmult0.2_11H_viabreg/20260403_dinoflow_multi_bs16_8kev_lr0.00025_trunkmult0.2_11H_viabreg_val/specificity_at_npv_0.95=0.459__epoch=39.ckpt"
 CSV="/home/31792/dinoflow_ds/updated_test_set_09052025_pb_with_reports_for_alex.csv"
 DATAROOT="/mnt/ri_share/Data/flow_data/"
 OUTDIR="./eval_outputs"
