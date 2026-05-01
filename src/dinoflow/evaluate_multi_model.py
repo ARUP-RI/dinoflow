@@ -58,27 +58,72 @@ logger = logging.getLogger(__name__)
 
 # Default heads to report in evaluate_multitask_model (order preserved in metrics tables).
 # May list every trained head or a subset (e.g. action_required only).
-EVAL_TASK_NAMES = ("action_required",)
+EVAL_TASK_NAMES = ("action_required", "suboptimal_viability", "reactive_vs_malignant", "disease_burden", "abberancy", "clonality", "acute_maturation","myeloid_lineage","bcell_lineage","t_nk_lineage","abnormal_pop")
 TASK_DEFS = {
     "action_required": {
         "type": "bce",
         "out_dim": 1,
         "label_col": "ACTION_REQUIRED",
-    }
-    #"suboptimal_viability": {
-        #"type": "reg",
-        #"out_dim": 1,
-        #"label_col": "viability_pct_y",
-        #"loss": "huber",
-        #"reg_target_transform": "logit",
-        #"logit_max": 100.0,
+    },
+    "suboptimal_viability": {
+        "type": "reg",
+        "out_dim": 1,
+        "label_col": "viability_pct_y",
+        "loss": "huber",
+        "reg_target_transform": "logit",
+        "logit_max": 100.0,
         #"logit_eps": 1.0e-4,
-    #},
-    #"reactive_vs_malignant": {
-    #    "type": "bce",
-    #    "out_dim": 1,
-    #    "label_col": "malignant_vs_reactive",
-    #},
+    },
+    "reactive_vs_malignant": {
+        "type": "bce",
+        "out_dim": 1,
+        "label_col": "malignant_vs_reactive",
+    },
+    "disease_burden": {
+        "type": "reg",
+        "out_dim": 1,
+        "label_col": "disease_burden_pct",
+        "loss": "huber",
+        "reg_target_transform": "arcsinh",
+        "arcsinh_scale": 1.0,
+    },
+    "abberancy": {
+        "type": "ordinal",
+        "out_dim": 3,
+        "label_col": "aberrancy_grade",
+        "coral_threshold_weights": [1.0, 2.0],
+        "coral_pos_weight": [1.0, 1.0],
+    },
+    "clonality": {
+        "type": "bce",
+        "out_dim": 1,
+        "label_col": "clonality",
+    },
+    "acute_maturation": {
+        "type": "bce",
+        "out_dim": 1,
+        "label_col": "maturation",
+    },
+    "myeloid_lineage": {
+        "type": "bce",
+        "out_dim": 1,
+        "label_col": "lineage_myeloid",
+    },
+    "bcell_lineage": {
+        "type": "bce",
+        "out_dim": 1,
+        "label_col": "lineage_B",
+    },
+    "t_nk_lineage": {
+        "type": "bce",
+        "out_dim": 1,
+        "label_col": "lineage_T",
+    },
+    "abnormal_pop": {
+        "type": "bce",
+        "out_dim": 1,
+        "label_col": "abnormal_population",
+    },
 }
 
 def _task_defs_from_hparams(hparams, names: tuple[str, ...]) -> dict | None:
@@ -275,6 +320,22 @@ def compute_multiclass_metrics(y_true, y_pred_class, class_names=None):
     return metrics
 
 
+def compute_ordinal_metrics(y_true, y_pred, class_names=None):
+    """
+    Ordinal (CORAL) task metrics: same multiclass reports as ``ce`` plus class MAE and within-1 accuracy.
+    """
+    y_true = np.asarray(y_true).astype(int)
+    y_pred = np.asarray(y_pred).astype(int)
+
+    if len(y_true) == 0:
+        return {"n": 0, "warning": "No rows"}
+
+    base = compute_multiclass_metrics(y_true, y_pred, class_names=class_names)
+    base["mae_class"] = float(np.mean(np.abs(y_true - y_pred)))
+    base["within_1"] = float(np.mean(np.abs(y_true - y_pred) <= 1))
+    return base
+
+
 def compute_regression_metrics(y_true, y_pred):
     """Mean absolute error and RMSE in the provided target space (training or physical)."""
     y_true = np.asarray(y_true).astype(float)
@@ -329,6 +390,19 @@ def postprocess_task_logits(logits, task_def):
         if reg_reports_physical_metrics(task_def):
             out["pred_value_physical"] = float(reg_training_to_physical(t, task_def))
         return out
+
+    elif task_type == "ordinal":
+        # CORAL: logits [B, K-1]; decode as count(sigmoid(logit_i) >= 0.5) -> class in 0..K-1
+        if logits.ndim != 2:
+            logits = logits.reshape(logits.shape[0], -1)
+        probs = torch.sigmoid(logits)
+        K = int(task_def["out_dim"])
+        pred_class = int((probs[0] >= 0.5).sum().item())
+        pred_class = max(0, min(K - 1, pred_class))
+        return {
+            "pred_class": pred_class,
+            "threshold_probs": probs[0].detach().float().cpu().numpy().tolist(),
+        }
 
     else:
         raise ValueError(f"Unsupported task type: {task_type}")
@@ -614,6 +688,20 @@ def extract_labels_and_masks(row_data, rowinfo, task_defs):
             elif s == "none":
                 labels_dict[task] = 0.0
 
+    # TubeData stores tensor labels/masks; normalize for CSV + metrics
+    def _maybe_torch_scalar(x):
+        if isinstance(x, torch.Tensor):
+            x = x.detach().cpu()
+            if x.numel() != 1:
+                return float(x.float().mean().item())
+            return float(x.item()) if x.dtype.is_floating_point else int(x.item())
+        return x
+
+    for task in list(labels_dict.keys()):
+        labels_dict[task] = _maybe_torch_scalar(labels_dict[task])
+    for task in list(masks_dict.keys()):
+        masks_dict[task] = float(_maybe_torch_scalar(masks_dict[task]))
+
     return labels_dict, masks_dict
 
 # Evaluation
@@ -762,6 +850,17 @@ def evaluate_multitask_model(
                     row["pred_value_mean_physical"] = float(np.nanmean(phys))
                     row["pred_value_std_physical"] = float(np.nanstd(phys))
 
+            elif task_def["type"] == "ordinal":
+                prob_mat = np.stack([np.array(p["threshold_probs"], dtype=float) for p in preds], axis=0)
+                mean_probs = prob_mat.mean(axis=0)
+                K = int(task_def["out_dim"])
+                pred_class = int((mean_probs >= 0.5).sum())
+                pred_class = max(0, min(K - 1, pred_class))
+                row.update({
+                    "pred_class": pred_class,
+                    "threshold_probs_mean": json.dumps(mean_probs.tolist()),
+                })
+
             long_rows.append(row)
 
     pred_long_df = pd.DataFrame(long_rows)
@@ -821,6 +920,17 @@ def evaluate_multitask_model(
                 m["rmse_physical"] = mp["rmse"]
             metrics_rows.append(m)
 
+        elif task_def["type"] == "ordinal":
+            y_true = tdf["true_label"].astype(int).values
+            y_pred = tdf["pred_class"].astype(int).values
+            K = int(task_def["out_dim"])
+            class_names = task_def.get("classes")
+            if class_names is None:
+                class_names = [str(i) for i in range(K)]
+            m = compute_ordinal_metrics(y_true, y_pred, class_names=class_names)
+            m.update({"task": task, "task_type": "ordinal"})
+            metrics_rows.append(m)
+
     metrics_df = pd.DataFrame(metrics_rows)
 
     return pred_long_df, metrics_df
@@ -870,6 +980,19 @@ def print_summary(pred_df, metrics_df, task_defs):
                     print(f"    {k}: {row[k]}")
         elif ttype == "reg":
             for k in ["n", "mae", "rmse"]:
+                if k in row and pd.notna(row[k]):
+                    print(f"    {k}: {row[k]}")
+        elif ttype == "ordinal":
+            for k in [
+                "n",
+                "accuracy",
+                "macro_f1",
+                "weighted_f1",
+                "mae_class",
+                "within_1",
+                "macro_precision",
+                "macro_recall",
+            ]:
                 if k in row and pd.notna(row[k]):
                     print(f"    {k}: {row[k]}")
         print()
@@ -1018,3 +1141,4 @@ def save_bce_threshold_sweeps(pred_df, task_defs, out_csv, thresholds=None):
 
 if __name__ == "__main__":
     main()
+  
